@@ -1,0 +1,24 @@
+services:
+  # Serviço do Banco de Dados
+  mongodb:
+    image: mongo:6.0
+    container_name: welfare_db_v2
+    restart: always
+    ports:
+      - "27017:27017"
+    environment:
+      - MONGO_INITDB_DATABASE=WelfareData_New
+    volumes:
+      - ./mongo-data:/data/db # Persistência dos dados na pasta local
+
+  # Opcional: Interface visual para ver o banco (Mongo Express)
+  mongo-express:
+    image: mongo-express
+    restart: always
+    ports:
+      - "8081:8081"
+    environment:
+      - ME_CONFIG_MONGODB_SERVER=mongodb
+      - ME_CONFIG_MONGODB_PORT=27017
+    depends_on:
+      - mongodb
