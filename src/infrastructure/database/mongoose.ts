@@ -1,86 +1,43 @@
 import mongoose from 'mongoose';
+import dotenv from 'dotenv';
 
-/**
- * Configuração e conexão com MongoDB usando Mongoose
- * Seguindo Clean Architecture: Infraestrutura isolada
- */
+// Garante que as variáveis de ambiente foram carregadas
+dotenv.config();
 
-interface MongooseConnectionOptions {
-  uri: string;
-  options?: mongoose.ConnectOptions;
-}
+const MONGO_URI = process.env.MONGO_CONNECTION_URL;
 
-class MongooseConnection {
-  private static instance: MongooseConnection;
-  private isConnected: boolean = false;
+// Configurações para robustez e performance
+const options: mongoose.ConnectOptions = {
+  maxPoolSize: 10, // Mantém até 10 conexões abertas para reuso (Performance)
+  serverSelectionTimeoutMS: 5000, // Falha rápido se o banco não responder em 5s
+  socketTimeoutMS: 45000, // Fecha sockets inativos após 45s
+};
 
-  private constructor() {}
-
-  public static getInstance(): MongooseConnection {
-    if (!MongooseConnection.instance) {
-      MongooseConnection.instance = new MongooseConnection();
-    }
-    return MongooseConnection.instance;
+export const connectToDatabase = async (): Promise<void> => {
+  if (!MONGO_URI) {
+    console.error('❌ FATAL: A variável MONGO_CONNECTION_URL não está definida no .env');
+    process.exit(1); // Encerra a aplicação se não houver banco
   }
 
-  /**
-   * Conecta ao MongoDB
-   * @param config Configurações de conexão
-   */
-  public async connect(config: MongooseConnectionOptions): Promise<void> {
-    if (this.isConnected) {
-      console.log('MongoDB já está conectado');
-      return;
-    }
+  // Listeners de eventos para monitoramento em tempo real
+  mongoose.connection.on('connected', () => {
+    console.log('✅ MongoDB: Conexão estabelecida com sucesso.');
+  });
 
-    try {
-      await mongoose.connect(config.uri, {
-        ...config.options,
-      });
+  mongoose.connection.on('error', (err) => {
+    console.error(`❌ MongoDB: Erro na conexão: ${err}`);
+  });
 
-      this.isConnected = true;
-      console.log('MongoDB conectado com sucesso');
+  mongoose.connection.on('disconnected', () => {
+    console.warn('⚠️ MongoDB: Conexão perdida. Tentando reconectar...');
+  });
 
-      // Event handlers
-      mongoose.connection.on('error', (error) => {
-        console.error('Erro na conexão MongoDB:', error);
-        this.isConnected = false;
-      });
-
-      mongoose.connection.on('disconnected', () => {
-        console.warn('MongoDB desconectado');
-        this.isConnected = false;
-      });
-    } catch (error) {
-      console.error('Falha ao conectar ao MongoDB:', error);
-      throw error;
-    }
+  try {
+    // A conexão moderna com async/await
+    await mongoose.connect(MONGO_URI, options);
+  } catch (error) {
+    console.error('❌ MongoDB: Falha crítica ao conectar na inicialização.');
+    console.error(error);
+    process.exit(1);
   }
-
-  /**
-   * Desconecta do MongoDB
-   */
-  public async disconnect(): Promise<void> {
-    if (!this.isConnected) {
-      return;
-    }
-
-    try {
-      await mongoose.disconnect();
-      this.isConnected = false;
-      console.log('MongoDB desconectado com sucesso');
-    } catch (error) {
-      console.error('Erro ao desconectar do MongoDB:', error);
-      throw error;
-    }
-  }
-
-  /**
-   * Retorna o status da conexão
-   */
-  public getConnectionStatus(): boolean {
-    return this.isConnected;
-  }
-}
-
-export default MongooseConnection.getInstance();
+};
