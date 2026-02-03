@@ -15,7 +15,7 @@ export class AuthController {
       if (error instanceof ZodError) {
         return res.status(400).json({
           error: 'Validation Error',
-          details: error.errors,
+          details: error.issues,
         });
       }
       if (error.message === 'User already exists') {
@@ -42,12 +42,22 @@ export class AuthController {
       return res.status(200).json({ user: result.user });
     } catch (error: any) {
       if (error instanceof ZodError) {
-        return res.status(400).json({ error: 'Validation Error', details: error.errors });
+        return res.status(400).json({ error: 'Validation Error', details: error.issues });
       }
       if (error.message === 'Invalid credentials') {
         return res.status(401).json({ error: 'Invalid credentials' });
       }
       return res.status(500).json({ error: 'Internal Server Error' });
     }
+  }
+
+  static async me(req: Request, res: Response) {
+    // req.user é preenchido pelo AuthMiddleware
+    return res.status(200).json({ user: req.user ?? null });
+  }
+
+  static async logout(req: Request, res: Response) {
+    res.clearCookie('token');
+    return res.status(200).json({ message: 'Logged out successfully' });
   }
 }
