@@ -27,6 +27,10 @@ app.get('/health', (req, res) => {
 import authRoutes from './presentation/routes/authRoutes';
 app.use('/auth', authRoutes);
 
+// Rotas de espécies
+import specieRoutes from './presentation/routes/specieRoutes';
+app.use('/species', specieRoutes);
+
 /**
  * Função principal para iniciar o servidor
  * Garante que o banco de dados esteja conectado antes de aceitar requisições

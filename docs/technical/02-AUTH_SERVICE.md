@@ -21,7 +21,7 @@ JWT_EXPIRES_IN=12h
 ## Exemplo de Uso
 ```typescript
 import { AuthService, ITokenPayload } from '../src/application/services/AuthService';
-
+AWAWAWAWsd
 const auth = new AuthService();
 
 // Hash de senha
