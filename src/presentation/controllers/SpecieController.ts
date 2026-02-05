@@ -60,8 +60,11 @@ export class SpecieController {
       if (error.message === 'Specie not found') {
         return res.status(404).json({ error: error.message });
       }
-      if (error.message === 'Specie with this pathname already exists') {
+      if (error.message === 'Specie with this name already exists') {
         return res.status(409).json({ error: error.message });
+      }
+      if (error.message.includes('Cannot update pathname')) {
+        return res.status(400).json({ error: error.message });
       }
       return res.status(500).json({ error: 'Internal Server Error' });
     }
@@ -76,6 +79,9 @@ export class SpecieController {
     } catch (error: any) {
       if (error.message === 'Specie not found') {
         return res.status(404).json({ error: error.message });
+      }
+      if (error.message.includes('Cannot delete specie with associated')) {
+        return res.status(409).json({ error: error.message });
       }
       return res.status(500).json({ error: 'Internal Server Error' });
     }

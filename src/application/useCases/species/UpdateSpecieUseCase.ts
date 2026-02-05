@@ -3,7 +3,6 @@ import { SpecieModel } from '../../../infrastructure/models/SpecieModel';
 
 export const UpdateSpecieSchema = z.object({
   name: z.string().min(3, 'Name must have at least 3 characters').optional(),
-  pathname: z.string().regex(/^[a-z-]+$/, 'Pathname must contain only lowercase letters and hyphens').optional(),
   description: z.string().optional(),
 });
 
@@ -18,10 +17,17 @@ export class UpdateSpecieUseCase {
       throw new Error('Specie not found');
     }
 
-    if (data.pathname && data.pathname !== specie.pathname) {
-      const exists = await SpecieModel.findOne({ pathname: data.pathname });
+    // CRITICAL: pathname is immutable after creation to preserve file system integrity and SEO
+    // If client tries to change pathname, throw error
+    if ('pathname' in input) {
+      throw new Error('Cannot update pathname: it is immutable after creation to preserve file integrity');
+    }
+
+    // Check name uniqueness if being updated
+    if (data.name && data.name !== specie.name) {
+      const exists = await SpecieModel.findOne({ name: data.name });
       if (exists) {
-        throw new Error('Specie with this pathname already exists');
+        throw new Error('Specie with this name already exists');
       }
     }
 
