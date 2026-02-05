@@ -31,6 +31,10 @@ app.use('/auth', authRoutes);
 import specieRoutes from './presentation/routes/specieRoutes';
 app.use('/species', specieRoutes);
 
+// Rotas de módulos de produção
+import productionModuleRoutes from './presentation/routes/productionModuleRoutes';
+app.use('/production-modules', productionModuleRoutes);
+
 /**
  * Função principal para iniciar o servidor
  * Garante que o banco de dados esteja conectado antes de aceitar requisições

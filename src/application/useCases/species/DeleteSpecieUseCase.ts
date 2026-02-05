@@ -1,4 +1,5 @@
 import { SpecieModel } from '../../../infrastructure/models/SpecieModel';
+import { ProductionModuleModel } from '../../../infrastructure/models/ProductionModuleModel';
 
 export class DeleteSpecieUseCase {
   async execute(id: string) {
@@ -7,15 +8,12 @@ export class DeleteSpecieUseCase {
       throw new Error('Specie not found');
     }
 
-    // TODO: Check if ProductionModules exist for this specie. 
-    // If yes, throw Error("Cannot delete specie with associated modules").
-    // This is CRITICAL for referential integrity - the system cannot have orphaned modules.
-    // Implement this check when ProductionModule model is created:
-    // 
-    // const hasModules = await ProductionModuleModel.exists({ specieId: id });
-    // if (hasModules) {
-    //   throw new Error('Cannot delete specie with associated production modules');
-    // }
+    // CRITICAL: Check if ProductionModules exist for this specie
+    // This prevents orphaned modules in the system
+    const hasModules = await ProductionModuleModel.exists({ specieId: id });
+    if (hasModules) {
+      throw new Error('Cannot delete specie with associated production modules');
+    }
 
     await SpecieModel.findByIdAndDelete(id);
 
