@@ -35,6 +35,10 @@ app.use('/species', specieRoutes);
 import productionModuleRoutes from './presentation/routes/productionModuleRoutes';
 app.use('/production-modules', productionModuleRoutes);
 
+// Rotas de processogramas
+import processogramRoutes from './presentation/routes/processogramRoutes';
+app.use('/processograms', processogramRoutes);
+
 /**
  * Função principal para iniciar o servidor
  * Garante que o banco de dados esteja conectado antes de aceitar requisições
