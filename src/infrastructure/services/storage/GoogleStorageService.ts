@@ -13,28 +13,17 @@ export class GoogleStorageService implements IStorageService {
   private bucketName: string;
 
   constructor() {
-    const projectId = process.env.GCS_PROJECT_ID;
-    const clientEmail = process.env.GCS_CLIENT_EMAIL;
-    const privateKey = process.env.GCS_PRIVATE_KEY;
     const bucketName = process.env.GCS_BUCKET_NAME;
 
-    if (!projectId || !clientEmail || !privateKey || !bucketName) {
+    if (!bucketName) {
       throw new Error(
         'FATAL: Missing Google Cloud Storage configuration. ' +
-        'Required env vars: GCS_PROJECT_ID, GCS_CLIENT_EMAIL, GCS_PRIVATE_KEY, GCS_BUCKET_NAME'
+        'Required env var: GCS_BUCKET_NAME'
       );
     }
 
-    // CRITICAL: Replace escaped newlines with actual newlines
-    // This is a common issue when private_key is stored in .env files
-    const formattedPrivateKey = privateKey.replace(/\\n/g, '\n');
-
     this.storage = new Storage({
-      projectId,
-      credentials: {
-        client_email: clientEmail,
-        private_key: formattedPrivateKey,
-      },
+      projectId: process.env.GCS_PROJECT_ID,
     });
 
     this.bucketName = bucketName;
@@ -63,7 +52,7 @@ export class GoogleStorageService implements IStorageService {
 
     // Make the file publicly accessible
     // CRITICAL: Required for frontend to access the files directly
-    await gcsFile.makePublic();
+    // await gcsFile.makePublic();
 
     // Return the public URL
     const publicUrl = `https://storage.googleapis.com/${this.bucketName}/${path}`;
@@ -138,10 +127,5 @@ export function getStorageService(): GoogleStorageService {
  * Use this to conditionally enable features that require storage
  */
 export function isStorageConfigured(): boolean {
-  return !!(
-    process.env.GCS_PROJECT_ID &&
-    process.env.GCS_CLIENT_EMAIL &&
-    process.env.GCS_PRIVATE_KEY &&
-    process.env.GCS_BUCKET_NAME
-  );
+  return !!process.env.GCS_BUCKET_NAME;
 }
