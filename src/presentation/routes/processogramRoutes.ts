@@ -17,6 +17,14 @@ router.post(
   ProcessogramController.create
 );
 
+router.put(
+  '/:id',
+  AuthMiddleware,
+  requireRole('admin'),
+  uploadSvg.single('file'),
+  ProcessogramController.update
+);
+
 router.delete('/:id', AuthMiddleware, requireRole('admin'), ProcessogramController.delete);
 
 export default router;
