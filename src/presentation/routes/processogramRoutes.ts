@@ -6,6 +6,9 @@ import { uploadSvg } from '../../infrastructure/config/upload';
 
 const router = Router();
 
+router.get('/', AuthMiddleware, ProcessogramController.list);
+router.get('/:id', AuthMiddleware, ProcessogramController.show);
+
 router.post(
   '/',
   AuthMiddleware,
@@ -13,5 +16,7 @@ router.post(
   uploadSvg.single('file'),
   ProcessogramController.create
 );
+
+router.delete('/:id', AuthMiddleware, requireRole('admin'), ProcessogramController.delete);
 
 export default router;

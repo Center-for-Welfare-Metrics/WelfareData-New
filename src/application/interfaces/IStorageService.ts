@@ -15,8 +15,16 @@ export interface IStorageService {
   upload(file: Buffer, path: string, mimeType: string): Promise<string>;
 
   /**
-   * Delete a file from storage
+   * Delete a file from storage by its relative path
    * @param path - Path of the file to delete
    */
   delete(path: string): Promise<void>;
+
+  /**
+   * Delete a file from storage by its public URL
+   * Extracts the relative path from the URL before deleting.
+   * Idempotent: does not throw if file doesn't exist.
+   * @param fileUrl - Public URL of the file to delete
+   */
+  deleteByUrl(fileUrl: string): Promise<void>;
 }

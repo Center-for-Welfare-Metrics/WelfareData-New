@@ -68,12 +68,25 @@ export class GoogleStorageService implements IStorageService {
       const gcsFile = this.bucket.file(path);
       await gcsFile.delete();
     } catch (error: any) {
-      // Silently ignore if file doesn't exist (404)
-      // This prevents errors when cleaning up files that were never uploaded
       if (error.code !== 404) {
         throw error;
       }
     }
+  }
+
+  /**
+   * Delete a file from Google Cloud Storage by its public URL
+   * Extracts the relative path from the URL and delegates to delete().
+   * Idempotent: silently ignores 404 errors.
+   */
+  async deleteByUrl(fileUrl: string): Promise<void> {
+    const prefix = `https://storage.googleapis.com/${this.bucketName}/`;
+    if (!fileUrl.startsWith(prefix)) {
+      console.warn(`Warning: URL does not match bucket "${this.bucketName}", skipping: ${fileUrl}`);
+      return;
+    }
+    const path = fileUrl.slice(prefix.length);
+    await this.delete(path);
   }
 
   /**
