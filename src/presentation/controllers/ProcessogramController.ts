@@ -63,6 +63,10 @@ export class ProcessogramController {
         return res.status(415).json({ error: UPLOAD_ERRORS.INVALID_TYPE });
       }
 
+      if (error.message.includes('timed out')) {
+        return res.status(504).json({ error: 'SVG processing timed out. The file may be too complex.' });
+      }
+
       console.error('ProcessogramController.create error:', error);
       return res.status(500).json({ error: 'Internal Server Error' });
     }
@@ -143,6 +147,9 @@ export class ProcessogramController {
         error.message.includes('does not belong')
       ) {
         return res.status(409).json({ error: error.message });
+      }
+      if (error.message.includes('timed out')) {
+        return res.status(504).json({ error: 'SVG processing timed out. The file may be too complex.' });
       }
       console.error('ProcessogramController.update error:', error);
       return res.status(500).json({ error: 'Internal Server Error' });

@@ -2,17 +2,31 @@ import express from 'express';
 import dotenv from 'dotenv';
 import cookieParser from 'cookie-parser';
 import { connectToDatabase } from './infrastructure/database/mongoose';
+import { shutdownSvgProcessor } from './infrastructure/services/svg';
 
-// Carrega variáveis de ambiente antes de tudo
 dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 8080;
 
-// Middlewares básicos
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
+
+// Request timeout: 6 min para rotas pesadas (SVG processing), 30s para o resto
+app.use((req, res, next) => {
+  const isHeavyRoute =
+    (req.method === 'POST' || req.method === 'PUT') &&
+    req.path.startsWith('/processograms');
+  const timeout = isHeavyRoute ? 360_000 : 30_000;
+
+  res.setTimeout(timeout, () => {
+    if (!res.headersSent) {
+      res.status(408).json({ error: 'Request timeout' });
+    }
+  });
+  next();
+});
 
 // Rota de health check
 app.get('/health', (req, res) => {
@@ -67,7 +81,6 @@ const startServer = async () => {
 // Tratamento de erros não capturados
 process.on('unhandledRejection', (reason, promise) => {
   console.error('❌ Unhandled Rejection at:', promise, 'reason:', reason);
-  process.exit(1);
 });
 
 process.on('uncaughtException', (error) => {
@@ -75,16 +88,14 @@ process.on('uncaughtException', (error) => {
   process.exit(1);
 });
 
-// Graceful shutdown
-process.on('SIGTERM', () => {
-  console.log('⚠️ SIGTERM recebido. Encerrando servidor gracefully...');
+const gracefulShutdown = async (signal: string) => {
+  console.log(`\n⚠️ ${signal} recebido. Encerrando servidor gracefully...`);
+  await shutdownSvgProcessor();
   process.exit(0);
-});
+};
 
-process.on('SIGINT', () => {
-  console.log('\n⚠️ SIGINT recebido. Encerrando servidor gracefully...');
-  process.exit(0);
-});
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 
 // Inicia o servidor
 startServer();

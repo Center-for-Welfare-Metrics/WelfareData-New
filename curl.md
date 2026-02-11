@@ -37,7 +37,7 @@ curl -X POST http://localhost:8080/auth/logout -b cookies.txt
 curl -X POST http://localhost:8080/species \
   -H "Content-Type: application/json" \
   -b cookies.txt \
-  -d '{"name":"Salmão","pathname":"salmon","description":"Salmão teste"}'
+  -d '{"name":"Pigs Teste","pathname":"pigs","description":"pigs teste de processograma"}'
 
 curl -X POST http://localhost:8080/species \
   -H "Content-Type: application/json" \
@@ -96,9 +96,9 @@ curl -X POST http://localhost:8080/processograms \
   -F "productionModuleId=698bd3818d74a9dc986074cb"
 
   # Update processograma
-  curl -X PUT http://localhost:8080/processograms/698914593bef77b80d6611fe \
+  curl -X PUT http://localhost:8080/processograms/698bdcf03d60b37e230bc9e9 \
    -b cookies.txt \
-   -F "file=@test.svg" \
-   -F "name=Teste Update SVG"
+   -F "file=@teste4.svg" \
+   -F "name=att teste"
 
    curl -X PUT http://localhost:8080/processograms/698914593bef77b80d6611fe -b cookies.txt -F "file=@test.svg" -F "name=Teste Update SVG"

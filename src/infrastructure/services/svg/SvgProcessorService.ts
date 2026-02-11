@@ -16,32 +16,25 @@ import {
   extractInteractiveIds,
 } from './plugins';
 
-// ID prefixes that should be rasterized for the frontend zoom feature
-const RASTERIZABLE_PREFIXES = ['--ps', '--lf', '--ph', '--ci'];
+const PROCESS_TIMEOUT_MS = 300_000; // 5 min max per process() call
+const BROWSER_LAUNCH_TIMEOUT_MS = 30_000;
+const PAGE_CONTENT_TIMEOUT_MS = 120_000;
+const PROTOCOL_TIMEOUT_MS = 180_000;
 
-/**
- * Browser-injectable script for calculating real bounding boxes
- * This adapts the legacy rasterizeSvg.ts logic for accurate coordinate extraction
- */
 const BBOX_EXTRACTION_SCRIPT = `
   window.getTransformedBBox = function(elementId) {
     const element = document.getElementById(elementId);
     if (!element) return null;
 
     try {
-      // Get the SVG root element
       const svg = document.querySelector('svg');
       if (!svg) return null;
 
-      // Get the bounding box in SVG coordinate space
       const bbox = element.getBBox();
-      
-      // Get the transformation matrix from element to screen
       const ctm = element.getCTM();
       const svgCtm = svg.getCTM();
-      
+
       if (!ctm || !svgCtm) {
-        // Fallback to basic bbox if CTM is not available
         return {
           x: bbox.x,
           y: bbox.y,
@@ -50,10 +43,7 @@ const BBOX_EXTRACTION_SCRIPT = `
         };
       }
 
-      // Calculate the inverse of SVG's CTM to get coordinates relative to SVG viewport
       const svgPoint = svg.createSVGPoint();
-      
-      // Transform all four corners of the bounding box
       const corners = [
         { x: bbox.x, y: bbox.y },
         { x: bbox.x + bbox.width, y: bbox.y },
@@ -68,7 +58,6 @@ const BBOX_EXTRACTION_SCRIPT = `
         return { x: transformed.x, y: transformed.y };
       });
 
-      // Calculate bounding box of transformed corners
       const minX = Math.min(...transformedCorners.map(c => c.x));
       const maxX = Math.max(...transformedCorners.map(c => c.x));
       const minY = Math.min(...transformedCorners.map(c => c.y));
@@ -89,7 +78,7 @@ const BBOX_EXTRACTION_SCRIPT = `
   window.getAllRasterizableElements = function() {
     const prefixes = ['--ps', '--lf', '--ph', '--ci'];
     const elements = [];
-    
+
     document.querySelectorAll('[id]').forEach(el => {
       const id = el.id;
       if (prefixes.some(prefix => id.startsWith(prefix))) {
@@ -102,19 +91,12 @@ const BBOX_EXTRACTION_SCRIPT = `
         }
       }
     });
-    
+
     return elements;
   };
 `;
 
 export class SvgProcessorService implements ISvgProcessor {
-  private browser: Browser | null = null;
-
-  constructor() {}
-
-  /**
-   * Get SVGO configuration
-   */
   private getSvgoConfig() {
     return {
       multipass: true,
@@ -126,46 +108,38 @@ export class SvgProcessorService implements ISvgProcessor {
     };
   }
 
-  /**
-   * Initialize the headless browser
-   */
-  private async initBrowser(): Promise<Browser> {
-    if (!this.browser) {
-      this.browser = await puppeteer.launch({
-        headless: true,
-        args: [
-          '--no-sandbox',
-          '--disable-setuid-sandbox',
-          '--disable-dev-shm-usage',
-          '--disable-gpu',
-          '--disable-software-rasterizer',
-        ],
-      });
-    }
-    return this.browser;
+  private async launchBrowser(): Promise<Browser> {
+    return puppeteer.launch({
+      headless: true,
+      protocolTimeout: PROTOCOL_TIMEOUT_MS,
+      args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-gpu',
+        '--disable-software-rasterizer',
+      ],
+    });
   }
 
-  /**
-   * Close the browser when done
-   */
-  async closeBrowser(): Promise<void> {
-    if (this.browser) {
-      await this.browser.close();
-      this.browser = null;
+  private async destroyBrowser(browser: Browser | null): Promise<void> {
+    if (!browser) return;
+    try {
+      await browser.close();
+    } catch {
+      try {
+        browser.process()?.kill('SIGKILL');
+      } catch {
+        // noop
+      }
     }
   }
 
-  /**
-   * Optimize SVG using SVGO with custom plugins
-   */
   private optimizeSvg(svgContent: string): string {
     const result = optimize(svgContent, this.getSvgoConfig());
     return result.data;
   }
 
-  /**
-   * Extract SVG metadata (dimensions, viewbox)
-   */
   private extractMetadata(svgContent: string): SvgMetadata {
     const dom = new JSDOM(svgContent, { contentType: 'image/svg+xml' });
     const svgElement = dom.window.document.querySelector('svg');
@@ -178,7 +152,6 @@ export class SvgProcessorService implements ISvgProcessor {
     const width = parseFloat(svgElement.getAttribute('width') || '1920');
     const height = parseFloat(svgElement.getAttribute('height') || '1080');
 
-    // Parse viewBox to get actual dimensions if width/height not specified
     const viewBoxParts = viewBox.split(/\s+|,/).map(parseFloat);
     const actualWidth = width || viewBoxParts[2] || 1920;
     const actualHeight = height || viewBoxParts[3] || 1080;
@@ -190,15 +163,11 @@ export class SvgProcessorService implements ISvgProcessor {
     };
   }
 
-  /**
-   * Rasterize an SVG element by taking a screenshot
-   */
   private async rasterizeElement(
     page: Page,
     elementId: string,
     bbox: { x: number; y: number; width: number; height: number }
   ): Promise<Buffer> {
-    // Add padding to prevent clipping
     const padding = 2;
     const clip = {
       x: Math.max(0, bbox.x - padding),
@@ -216,132 +185,115 @@ export class SvgProcessorService implements ISvgProcessor {
     return screenshot as Buffer;
   }
 
-  /**
-   * Process an SVG buffer and extract rasterized images with coordinates
-   */
   async process(buffer: Buffer): Promise<ProcessedSvgOutput> {
     const svgContent = buffer.toString('utf-8');
 
-    // Step 1: Optimize SVG
     const optimizedSvg = this.optimizeSvg(svgContent);
-
-    // Step 2: Extract metadata
     const metadata = this.extractMetadata(optimizedSvg);
 
-    // Step 3: Initialize browser and create page
-    const browser = await this.initBrowser();
-    const page = await browser.newPage();
+    let browser: Browser | null = null;
+
+    const doProcess = async (): Promise<ProcessedSvgOutput> => {
+      browser = await this.launchBrowser();
+      const page = await browser.newPage();
+
+      try {
+        await page.setViewport({
+          width: Math.ceil(metadata.width),
+          height: Math.ceil(metadata.height),
+          deviceScaleFactor: 2,
+        });
+
+        const htmlContent = `
+          <!DOCTYPE html>
+          <html>
+            <head>
+              <style>
+                * { margin: 0; padding: 0; box-sizing: border-box; }
+                body { background: transparent; overflow: hidden; }
+                svg { display: block; }
+              </style>
+            </head>
+            <body>
+              ${optimizedSvg}
+            </body>
+          </html>
+        `;
+
+        await page.setContent(htmlContent, {
+          waitUntil: 'domcontentloaded',
+          timeout: PAGE_CONTENT_TIMEOUT_MS,
+        });
+
+        await page.evaluate(BBOX_EXTRACTION_SCRIPT);
+
+        const elements = await page.evaluate(() => {
+          return (window as any).getAllRasterizableElements();
+        });
+
+        console.log(`[SvgProcessor] Found ${elements.length} rasterizable elements`);
+
+        const rasterImages = new Map<string, IRasterImage>();
+
+        for (const element of elements) {
+          try {
+            const screenshotBuffer = await this.rasterizeElement(page, element.id, {
+              x: element.x,
+              y: element.y,
+              width: element.width,
+              height: element.height,
+            });
+
+            const processedBuffer = await sharp(screenshotBuffer)
+              .png({ compressionLevel: 9 })
+              .toBuffer();
+
+            const rasterImage: IRasterImage = {
+              src: '',
+              bucket_key: '',
+              width: element.width,
+              height: element.height,
+              x: element.x,
+              y: element.y,
+            };
+
+            (rasterImage as any)._buffer = processedBuffer;
+            rasterImages.set(element.id, rasterImage);
+          } catch (error) {
+            console.error(`[SvgProcessor] Failed to rasterize element ${element.id}:`, error);
+          }
+        }
+
+        console.log(`[SvgProcessor] Rasterized ${rasterImages.size}/${elements.length} elements`);
+
+        return { optimizedSvg, rasterImages, metadata };
+      } finally {
+        await page.close().catch(() => {});
+      }
+    };
 
     try {
-      // Set viewport to match SVG dimensions
-      await page.setViewport({
-        width: Math.ceil(metadata.width),
-        height: Math.ceil(metadata.height),
-        deviceScaleFactor: 2, // High DPI for better quality
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        setTimeout(() => reject(new Error(
+          `SVG processing timed out after ${PROCESS_TIMEOUT_MS / 1000}s`
+        )), PROCESS_TIMEOUT_MS);
       });
 
-      // Create HTML wrapper for the SVG
-      const htmlContent = `
-        <!DOCTYPE html>
-        <html>
-          <head>
-            <style>
-              * { margin: 0; padding: 0; box-sizing: border-box; }
-              body { background: transparent; overflow: hidden; }
-              svg { display: block; }
-            </style>
-          </head>
-          <body>
-            ${optimizedSvg}
-          </body>
-        </html>
-      `;
-
-      await page.setContent(htmlContent, { waitUntil: 'networkidle0' });
-
-      // Step 4: Inject bbox extraction script
-      await page.evaluate(BBOX_EXTRACTION_SCRIPT);
-
-      // Step 5: Get all rasterizable elements with their bounding boxes
-      const elements = await page.evaluate(() => {
-        return (window as any).getAllRasterizableElements();
-      });
-
-      // Step 6: Rasterize each element
-      const rasterImages = new Map<string, IRasterImage>();
-
-      for (const element of elements) {
-        try {
-          const screenshotBuffer = await this.rasterizeElement(page, element.id, {
-            x: element.x,
-            y: element.y,
-            width: element.width,
-            height: element.height,
-          });
-
-          // Process with sharp for optimization
-          const processedBuffer = await sharp(screenshotBuffer)
-            .png({ compressionLevel: 9 })
-            .toBuffer();
-
-          // The actual upload to GCS and URL generation will happen in the UseCase
-          // Here we store the buffer data as base64 temporarily
-          const rasterImage: IRasterImage = {
-            src: '', // Will be filled after upload
-            bucket_key: '', // Will be filled after upload
-            width: element.width,
-            height: element.height,
-            x: element.x,
-            y: element.y,
-          };
-
-          // Store buffer in a temporary property for later processing
-          (rasterImage as any)._buffer = processedBuffer;
-
-          rasterImages.set(element.id, rasterImage);
-        } catch (error) {
-          console.error(`Failed to rasterize element ${element.id}:`, error);
-          // Continue with other elements
-        }
-      }
-
-      return {
-        optimizedSvg,
-        rasterImages,
-        metadata,
-      };
+      const result = await Promise.race([doProcess(), timeoutPromise]);
+      return result;
+    } catch (error) {
+      console.error('[SvgProcessor] Process failed, destroying browser:', error);
+      throw error;
     } finally {
-      await page.close();
+      await this.destroyBrowser(browser);
     }
-  }
-
-  /**
-   * Process SVG for a specific theme (light/dark)
-   * This is a convenience method that wraps process()
-   */
-  async processForTheme(
-    buffer: Buffer,
-    theme: 'light' | 'dark'
-  ): Promise<ProcessedSvgOutput> {
-    // For dark theme, we might need to apply color transformations
-    // This can be extended based on requirements
-    return this.process(buffer);
   }
 }
 
-// Singleton instance for reuse
-let processorInstance: SvgProcessorService | null = null;
-
 export function getSvgProcessor(): SvgProcessorService {
-  if (!processorInstance) {
-    processorInstance = new SvgProcessorService();
-  }
-  return processorInstance;
+  return new SvgProcessorService();
 }
 
 export async function shutdownSvgProcessor(): Promise<void> {
-  if (processorInstance) {
-    await processorInstance.closeBrowser();
-    processorInstance = null;
-  }
+  // noop — each process() now manages its own browser lifecycle
 }
