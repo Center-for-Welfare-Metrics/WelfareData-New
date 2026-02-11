@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { ProcessogramController } from '../controllers/ProcessogramController';
+import { ProcessogramAIController } from '../controllers/ProcessogramAIController';
 import { AuthMiddleware } from '../middlewares/AuthMiddleware';
 import { requireRole } from '../middlewares/RoleMiddleware';
 import { uploadSvg } from '../../infrastructure/config/upload';
@@ -24,6 +25,8 @@ router.put(
   uploadSvg.single('file'),
   ProcessogramController.update
 );
+
+router.post('/:id/analyze', AuthMiddleware, requireRole('admin'), ProcessogramAIController.analyze);
 
 router.delete('/:id', AuthMiddleware, requireRole('admin'), ProcessogramController.delete);
 

@@ -37,12 +37,12 @@ curl -X POST http://localhost:8080/auth/logout -b cookies.txt
 curl -X POST http://localhost:8080/species \
   -H "Content-Type: application/json" \
   -b cookies.txt \
-  -d '{"name":"Bovino","pathname":"bovino","description":"Gado de corte e leite"}'
+  -d '{"name":"Salmão","pathname":"salmon","description":"Salmão teste"}'
 
 curl -X POST http://localhost:8080/species \
   -H "Content-Type: application/json" \
   -b cookies.txt \
-  -d '{"name":"Suíno","pathname":"suino","description":"Criação de porcos"}'
+  -d '{"name":"pigs teste att","pathname":"pigsatt","description":"Criação de porcos att"}'
 
 curl -X POST http://localhost:8080/species \
   -H "Content-Type: application/json" \
@@ -61,6 +61,13 @@ curl -X PUT http://localhost:8080/species/SPECIE_ID \
 # 4. Deletar espécie (requer admin) - substitua SPECIE_ID
 curl -X DELETE http://localhost:8080/species/SPECIE_ID -b cookies.txt
 
+# Criar Módulo
+curl -X POST http://localhost:8080/production-modules \
+  -H "Content-Type: application/json" \
+  -b cookies.txt \
+  -d '{"name":"Hatchery","slug":"hatchery","specieId":"698bdadc262e0de57909e216","description":"Incubação de ovos"}'
+
+
 # ----- EXEMPLOS COM ID REAL -----
 # Substitua 6982b34b23489c7d39b8d3c2 pelo ID retornado ao criar
 
@@ -76,7 +83,22 @@ curl -X DELETE http://localhost:8080/species/6982b34b23489c7d39b8d3c2 -b cookies
 # Criar processograma
 curl -X POST http://localhost:8080/processograms \
   -b cookies.txt \
-  -F "file=@test2.svg" \
+  -F "file=@salmon.svg" \
   -F "name=Pigs" \
-  -F "specieId=6982d3da664702d6feacd480" \
-  -F "productionModuleId=6989011bc946774cb98eb1ec"
+  -F "specieId=698bd2ac8d74a9dc986074c7" \
+  -F "productionModuleId=698bd3818d74a9dc986074cb"
+
+  curl -X POST http://localhost:8080/processograms \
+  -b cookies.txt \
+  -F "file=@test3.svg" \
+  -F "name=Pigs" \
+  -F "specieId=698bd2ac8d74a9dc986074c7" \
+  -F "productionModuleId=698bd3818d74a9dc986074cb"
+
+  # Update processograma
+  curl -X PUT http://localhost:8080/processograms/698914593bef77b80d6611fe \
+   -b cookies.txt \
+   -F "file=@test.svg" \
+   -F "name=Teste Update SVG"
+
+   curl -X PUT http://localhost:8080/processograms/698914593bef77b80d6611fe -b cookies.txt -F "file=@test.svg" -F "name=Teste Update SVG"

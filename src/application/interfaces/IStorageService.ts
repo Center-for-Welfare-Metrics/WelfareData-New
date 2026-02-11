@@ -27,4 +27,11 @@ export interface IStorageService {
    * @param fileUrl - Public URL of the file to delete
    */
   deleteByUrl(fileUrl: string): Promise<void>;
+
+  /**
+   * Download a file from storage as a UTF-8 string
+   * @param fileUrl - Public URL of the file to download
+   * @returns File content as string
+   */
+  downloadAsText(fileUrl: string): Promise<string>;
 }

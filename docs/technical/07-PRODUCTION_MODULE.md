@@ -87,7 +87,7 @@ interface IProductionModule {
 curl -X POST http://localhost:8080/production-modules \
   -H "Content-Type: application/json" \
   -b cookies.txt \
-  -d '{"name":"Hatchery","slug":"hatchery","specieId":"SPECIE_ID","description":"Incubação de ovos"}'
+  -d '{"name":"Hatchery","slug":"hatchery","specieId":"698bd2ac8d74a9dc986074c7","description":"Incubação de ovos"}'
 
 curl -X POST http://localhost:8080/production-modules \
   -H "Content-Type: application/json" \

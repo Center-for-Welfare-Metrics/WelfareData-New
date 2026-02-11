@@ -119,6 +119,20 @@ export class GoogleStorageService implements IStorageService {
       return false;
     }
   }
+
+  /**
+   * Download a file from Google Cloud Storage as UTF-8 text
+   * Extracts relative path from public URL before downloading.
+   */
+  async downloadAsText(fileUrl: string): Promise<string> {
+    const prefix = `https://storage.googleapis.com/${this.bucketName}/`;
+    if (!fileUrl.startsWith(prefix)) {
+      throw new Error(`URL does not match bucket "${this.bucketName}": ${fileUrl}`);
+    }
+    const path = fileUrl.slice(prefix.length);
+    const [buffer] = await this.bucket.file(path).download();
+    return buffer.toString('utf-8');
+  }
 }
 
 // Singleton instance
