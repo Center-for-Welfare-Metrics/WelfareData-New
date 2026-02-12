@@ -53,6 +53,14 @@ app.use('/production-modules', productionModuleRoutes);
 import processogramRoutes from './presentation/routes/processogramRoutes';
 app.use('/processograms', processogramRoutes);
 
+// Rotas de dados de processograma (Human-in-the-Loop)
+import processogramDataRoutes from './presentation/routes/processogramDataRoutes';
+app.use('/processogram-data', processogramDataRoutes);
+
+// Rotas de questões de processograma (Human-in-the-Loop)
+import processogramQuestionRoutes from './presentation/routes/processogramQuestionRoutes';
+app.use('/processogram-questions', processogramQuestionRoutes);
+
 /**
  * Função principal para iniciar o servidor
  * Garante que o banco de dados esteja conectado antes de aceitar requisições

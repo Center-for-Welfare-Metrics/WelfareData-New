@@ -18,7 +18,7 @@ export interface BulkAnalysisResult {
 
 export class GeminiService {
   private genAI: GoogleGenerativeAI;
-  private modelName = 'gemini-2.0-flash';
+  private modelName = 'gemini-2.5-flash';
 
   constructor() {
     const apiKey = process.env.GEMINI_API_KEY;
