@@ -83,10 +83,10 @@ curl -X DELETE http://localhost:8080/species/6982b34b23489c7d39b8d3c2 -b cookies
 # Criar processograma
 curl -X POST http://localhost:8080/processograms \
   -b cookies.txt \
-  -F "file=@salmon.svg" \
+  -F "file=@test2.svg" \
   -F "name=Pigs" \
-  -F "specieId=698bd2ac8d74a9dc986074c7" \
-  -F "productionModuleId=698bd3818d74a9dc986074cb"
+  -F "specieId=698bf5b3741ecbd3dfc30ce6" \
+  -F "productionModuleId=698d08f388c7d6b69e16d8c2"
 
   curl -X POST http://localhost:8080/processograms \
   -b cookies.txt \
@@ -96,9 +96,30 @@ curl -X POST http://localhost:8080/processograms \
   -F "productionModuleId=698bd3818d74a9dc986074cb"
 
   # Update processograma
-  curl -X PUT http://localhost:8080/processograms/698bdcf03d60b37e230bc9e9 \
+  curl -X PUT http://localhost:8080/processograms/698bf5b3741ecbd3dfc30ce6 \
    -b cookies.txt \
    -F "file=@teste4.svg" \
    -F "name=att teste"
 
    curl -X PUT http://localhost:8080/processograms/698914593bef77b80d6611fe -b cookies.txt -F "file=@test.svg" -F "name=Teste Update SVG"
+
+# 1. Criar módulo para uma espécie (requer admin)
+curl -X POST http://localhost:8080/production-modules \
+  -H "Content-Type: application/json" \
+  -b cookies.txt \
+  -d '{"name":"Hatchery","slug":"hatchery","specieId":"698bf5b3741ecbd3dfc30ce6","description":"Engorda de Porcos para Abate"}'
+
+
+  # Disparar análise
+curl -X POST http://localhost:8080/processograms/698d0ba6b239e4365a8d19ac/analyze \
+  -b cookies.txt
+
+### Consultar resultados
+
+# Ver descrições de um elemento específico
+curl "http://localhost:8080/processogram-data?processogramId=698bdcf03d60b37e230bc9e9&elementId=laying_hen--lf" \
+  -b cookies.txt
+
+# Ver perguntas de quiz
+curl "http://localhost:8080/processogram-questions?processogramId=698bdcf03d60b37e230bc9e9&elementId=laying_hen--lf" \
+  -b cookies.txt

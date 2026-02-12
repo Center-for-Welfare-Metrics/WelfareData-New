@@ -1,19 +1,47 @@
 import * as cheerio from 'cheerio';
 import { ProcessogramModel } from '../../../infrastructure/models/ProcessogramModel';
 import { ProcessogramDataModel } from '../../../infrastructure/models/ProcessogramDataModel';
-import { ProcessogramQuestionModel } from '../../../infrastructure/models/ProcessogramQuestionModel';
 import { getStorageService } from '../../../infrastructure/services/storage';
-import { getGeminiService } from '../../../infrastructure/services/ai';
+import { getGeminiService, ElementInput } from '../../../infrastructure/services/ai';
 
-const RASTERIZABLE_PREFIXES = ['--ps', '--lf', '--ph', '--ci'];
+const ANALYZABLE_PATTERN = /(?:--|_)(ps|lf|ph|ci)(?:[_-]\d+[_-]?)?$/;
+
+const LEVEL_MAP: Record<string, string> = {
+  ps: 'production system',
+  lf: 'life-fate',
+  ph: 'phase',
+  ci: 'circumstance',
+};
 
 function isAnalyzableId(id: string): boolean {
-  return RASTERIZABLE_PREFIXES.some((prefix) => id.startsWith(prefix));
+  return ANALYZABLE_PATTERN.test(id);
+}
+
+function extractLevel(id: string): string {
+  const match = id.match(ANALYZABLE_PATTERN);
+  return match ? LEVEL_MAP[match[1]] || 'unknown' : 'unknown';
+}
+
+function extractName(id: string): string {
+  return id
+    .replace(ANALYZABLE_PATTERN, '')
+    .replace(/[-_]+$/, '')
+    .replace(/--/g, '-')
+    .replace(/[_-]/g, ' ')
+    .trim();
+}
+
+function buildParentString(
+  parentIds: string[]
+): string {
+  if (parentIds.length === 0) return 'none';
+  return parentIds
+    .map((pid) => `${extractLevel(pid)} - ${extractName(pid)}`)
+    .join(', ');
 }
 
 export class AnalyzeProcessogramUseCase {
   async execute(processogramId: string) {
-    // Step 1: Fetch processogram
     const processogram = await ProcessogramModel.findById(processogramId)
       .populate('specieId', 'name pathname')
       .populate('productionModuleId', 'name slug');
@@ -26,51 +54,47 @@ export class AnalyzeProcessogramUseCase {
       throw new Error('Processogram has no SVG file to analyze');
     }
 
-    // Step 2: Download SVG from GCS
     const storage = getStorageService();
     const svgContent = await storage.downloadAsText(processogram.svg_url_light);
 
-    // Step 3: Extract element IDs using Cheerio
     const $ = cheerio.load(svgContent, { xml: true });
-    const elementIds: string[] = [];
+
+    const elements: ElementInput[] = [];
 
     $('[id]').each((_, el) => {
       const id = $(el).attr('id');
-      if (id && isAnalyzableId(id)) {
-        elementIds.push(id);
+      if (!id || !isAnalyzableId(id)) return;
+
+      const parentIds: string[] = [];
+      let current = $(el).parent();
+      while (current.length && current[0].type === 'tag' && (current[0] as any).name !== 'svg') {
+        const parentId = current.attr('id');
+        if (parentId && isAnalyzableId(parentId)) {
+          parentIds.unshift(parentId);
+        }
+        current = current.parent();
       }
+
+      elements.push({
+        elementId: id,
+        level: extractLevel(id),
+        name: extractName(id),
+        parents: buildParentString(parentIds),
+      });
     });
 
-    if (elementIds.length === 0) {
+    if (elements.length === 0) {
       return {
         processogramId,
         message: 'No analyzable elements found in SVG',
         elementsAnalyzed: 0,
         descriptionsUpserted: 0,
-        questionsUpserted: 0,
       };
     }
 
-    // Step 4: Build context for Gemini
-    const specie = processogram.specieId as any;
-    const module = processogram.productionModuleId as any;
-    const context = [
-      `Processograma: "${processogram.name}"`,
-      `Espécie: ${specie?.name || 'N/A'}`,
-      `Módulo de Produção: ${module?.name || 'N/A'}`,
-      `Identificador: ${processogram.identifier}`,
-      processogram.description ? `Descrição: ${processogram.description}` : '',
-      `Total de elementos interativos: ${elementIds.length}`,
-      `IDs dos elementos: ${elementIds.join(', ')}`,
-    ]
-      .filter(Boolean)
-      .join('\n');
-
-    // Step 5: Call Gemini for bulk analysis
     const gemini = getGeminiService();
-    const analysis = await gemini.generateBulkAnalysis(context, elementIds);
+    const analysis = await gemini.generateBulkAnalysis(elements);
 
-    // Step 6: Bulk upsert descriptions
     const dataOps = analysis.elements.map((el) => ({
       updateOne: {
         filter: { processogramId, elementId: el.elementId },
@@ -93,53 +117,12 @@ export class AnalyzeProcessogramUseCase {
       await ProcessogramDataModel.bulkWrite(dataOps);
     }
 
-    // Step 7: Bulk upsert questions
-    const questionOps: any[] = [];
-    for (const el of analysis.elements) {
-      if (!el.questions || el.questions.length === 0) continue;
-
-      // Delete existing questions for this element, then insert fresh
-      questionOps.push({
-        deleteMany: {
-          filter: { processogramId, elementId: el.elementId },
-        },
-      });
-
-      for (const q of el.questions) {
-        questionOps.push({
-          insertOne: {
-            document: {
-              processogramId,
-              elementId: el.elementId,
-              question: q.question,
-              options: q.options,
-              correctAnswerIndex: q.correctAnswerIndex,
-              createdAt: new Date(),
-              updatedAt: new Date(),
-            },
-          },
-        });
-      }
-    }
-
-    if (questionOps.length > 0) {
-      await ProcessogramQuestionModel.bulkWrite(questionOps);
-    }
-
-    // Step 8: Count results
-    const descriptionsUpserted = analysis.elements.length;
-    const questionsUpserted = analysis.elements.reduce(
-      (acc, el) => acc + (el.questions?.length || 0),
-      0
-    );
-
     return {
       processogramId,
-      message: `Analysis complete: ${elementIds.length} elements processed`,
-      elementsFound: elementIds.length,
+      message: `Analysis complete: ${elements.length} elements processed`,
+      elementsFound: elements.length,
       elementsAnalyzed: analysis.elements.length,
-      descriptionsUpserted,
-      questionsUpserted,
+      descriptionsUpserted: analysis.elements.length,
     };
   }
 }

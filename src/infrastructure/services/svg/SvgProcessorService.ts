@@ -76,12 +76,12 @@ const BBOX_EXTRACTION_SCRIPT = `
   };
 
   window.getAllRasterizableElements = function() {
-    const prefixes = ['--ps', '--lf', '--ph', '--ci'];
+    const suffixPattern = /(?:--|_)(ps|lf|ph|ci)(?:[_-]\\d+[_-]?)?$/;
     const elements = [];
 
     document.querySelectorAll('[id]').forEach(el => {
       const id = el.id;
-      if (prefixes.some(prefix => id.startsWith(prefix))) {
+      if (suffixPattern.test(id)) {
         const bbox = window.getTransformedBBox(id);
         if (bbox && bbox.width > 0 && bbox.height > 0) {
           elements.push({
@@ -101,7 +101,14 @@ export class SvgProcessorService implements ISvgProcessor {
     return {
       multipass: true,
       plugins: [
-        'preset-default',
+        {
+          name: 'preset-default',
+          params: {
+            overrides: {
+              cleanupIds: false,
+            },
+          },
+        },
         fixMissingSvgIdPlugin,
         removeBxAttributesPlugin,
       ] as any[],
