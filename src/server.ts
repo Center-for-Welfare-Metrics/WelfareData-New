@@ -13,11 +13,16 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
 
-// Request timeout: 6 min para rotas pesadas (SVG processing), 30s para o resto
+// Request timeout: 6 min para rotas pesadas (SVG processing), sem timeout para SSE, 30s para o resto
 app.use((req, res, next) => {
   const isHeavyRoute =
     (req.method === 'POST' || req.method === 'PUT') &&
     req.path.startsWith('/processograms');
+  const isStreamRoute =
+    req.method === 'POST' && req.path === '/chat/stream';
+
+  if (isStreamRoute) return next();
+
   const timeout = isHeavyRoute ? 360_000 : 30_000;
 
   res.setTimeout(timeout, () => {
@@ -60,6 +65,10 @@ app.use('/processogram-data', processogramDataRoutes);
 // Rotas de questões de processograma (Human-in-the-Loop)
 import processogramQuestionRoutes from './presentation/routes/processogramQuestionRoutes';
 app.use('/processogram-questions', processogramQuestionRoutes);
+
+// Rotas de chat contextual (Streaming)
+import chatRoutes from './presentation/routes/chatRoutes';
+app.use('/chat', chatRoutes);
 
 /**
  * Função principal para iniciar o servidor

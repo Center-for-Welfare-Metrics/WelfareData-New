@@ -1,4 +1,4 @@
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import { GoogleGenerativeAI, Content } from '@google/generative-ai';
 
 export interface ElementInput {
   elementId: string;
@@ -14,6 +14,11 @@ interface ElementAnalysis {
 
 export interface BulkAnalysisResult {
   elements: ElementAnalysis[];
+}
+
+export interface ChatMessage {
+  role: 'user' | 'model';
+  parts: string;
 }
 
 export class GeminiService {
@@ -86,6 +91,23 @@ Respond ONLY with the JSON, no additional text.`;
     } catch {
       throw new Error(`Gemini returned invalid JSON: ${text.slice(0, 200)}`);
     }
+  }
+
+  async streamChat(context: string, userMessage: string, history: ChatMessage[]) {
+    const model = this.genAI.getGenerativeModel({
+      model: 'gemini-2.5-flash',
+      generationConfig: { temperature: 0.3 },
+      systemInstruction: context,
+    });
+
+    const chatHistory: Content[] = history.map((msg) => ({
+      role: msg.role,
+      parts: [{ text: msg.parts }],
+    }));
+
+    const chat = model.startChat({ history: chatHistory });
+    const result = await chat.sendMessageStream(userMessage);
+    return result;
   }
 }
 
