@@ -2,6 +2,7 @@
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ThemeProvider } from "next-themes";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import { useState, type ReactNode } from "react";
 
 interface AppProvidersProps {
@@ -30,7 +31,7 @@ export function AppProviders({ children }: AppProvidersProps) {
         enableSystem={false}
         disableTransitionOnChange
       >
-        {children}
+        <TooltipProvider>{children}</TooltipProvider>
       </ThemeProvider>
     </QueryClientProvider>
   );

@@ -16,6 +16,7 @@ O backend processa uploads de SVG, otimiza e rasteriza os diagramas, persiste me
 | [Data Flow](./data_flow.md) | Fluxo crítico: do upload do SVG ao chat contextual |
 | [Security Model](./security_model.md) | Autenticação, autorização e gestão de credenciais |
 | [Environment Variables](./environment_variables.md) | Variáveis de ambiente e configuração |
+| [Frontend Guidelines](./frontend_guidelines.md) | Stack, UX/UI, temas Dark/Light, gamificação |
 | [ADR-001: Google Gemini](./architecture_decisions/001_use_of_google_gemini.md) | Decisão de adoção do Google Gemini como provider de IA |
 
 ### Documentação Técnica por Feature
@@ -68,7 +69,7 @@ npm start
 ### Verificar
 
 ```bash
-curl http://localhost:8080/health
+curl http://localhost:8080/api/v1/health
 # → { "status": "OK", "timestamp": "...", "environment": "development" }
 ```
 
@@ -96,13 +97,16 @@ curl http://localhost:8080/health
 
 ## Endpoints
 
+Todas as rotas da API estão sob o namespace `/api/v1`.
+
 | Grupo | Base Path | Descrição |
 |-------|-----------|-----------|
-| Health | `GET /health` | Health check |
-| Auth | `/auth` | Registro, login, logout, perfil |
-| Species | `/species` | CRUD de espécies |
-| Production Modules | `/production-modules` | CRUD de módulos de produção |
-| Processograms | `/processograms` | CRUD de processogramas + análise IA |
-| Processogram Data | `/processogram-data` | Edição de descrições (Human-in-the-Loop) |
-| Processogram Questions | `/processogram-questions` | Edição de questões (Human-in-the-Loop) |
-| Chat | `/chat` | Chat contextual com streaming SSE |
+| Root | `GET /` | Status temporário (frontend em construção) |
+| Health | `GET /api/v1/health` | Health check |
+| Auth | `/api/v1/auth` | Registro, login, logout, perfil |
+| Species | `/api/v1/species` | CRUD de espécies |
+| Production Modules | `/api/v1/production-modules` | CRUD de módulos de produção |
+| Processograms | `/api/v1/processograms` | CRUD de processogramas + análise IA |
+| Processogram Data | `/api/v1/processogram-data` | Edição de descrições (Human-in-the-Loop) |
+| Processogram Questions | `/api/v1/processogram-questions` | Edição de questões (Human-in-the-Loop) |
+| Chat | `/api/v1/chat` | Chat contextual com streaming SSE |

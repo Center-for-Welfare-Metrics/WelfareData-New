@@ -4,6 +4,14 @@ import cookieParser from 'cookie-parser';
 import { connectToDatabase } from './infrastructure/database/mongoose';
 import { shutdownSvgProcessor } from './infrastructure/services/svg';
 
+import authRoutes from './presentation/routes/authRoutes';
+import specieRoutes from './presentation/routes/specieRoutes';
+import productionModuleRoutes from './presentation/routes/productionModuleRoutes';
+import processogramRoutes from './presentation/routes/processogramRoutes';
+import processogramDataRoutes from './presentation/routes/processogramDataRoutes';
+import processogramQuestionRoutes from './presentation/routes/processogramQuestionRoutes';
+import chatRoutes from './presentation/routes/chatRoutes';
+
 dotenv.config();
 
 const app = express();
@@ -17,9 +25,9 @@ app.use(cookieParser());
 app.use((req, res, next) => {
   const isHeavyRoute =
     (req.method === 'POST' || req.method === 'PUT') &&
-    req.path.startsWith('/processograms');
+    req.path.includes('/processograms');
   const isStreamRoute =
-    req.method === 'POST' && req.path === '/chat/stream';
+    req.method === 'POST' && req.path.includes('/chat/stream');
 
   if (isStreamRoute) return next();
 
@@ -33,8 +41,17 @@ app.use((req, res, next) => {
   next();
 });
 
-// Rota de health check
-app.get('/health', (req, res) => {
+// Endpoint raiz temporário
+app.get('/', (req, res) => {
+  res.status(200).json({
+    message: 'WelfareData API v1 running. Frontend under construction.',
+  });
+});
+
+// ─── API v1 ─────────────────────────────────────────────────
+const apiV1 = express.Router();
+
+apiV1.get('/health', (req, res) => {
   res.status(200).json({
     status: 'OK',
     timestamp: new Date().toISOString(),
@@ -42,33 +59,15 @@ app.get('/health', (req, res) => {
   });
 });
 
-// Rotas de autenticação
-import authRoutes from './presentation/routes/authRoutes';
-app.use('/auth', authRoutes);
+apiV1.use('/auth', authRoutes);
+apiV1.use('/species', specieRoutes);
+apiV1.use('/production-modules', productionModuleRoutes);
+apiV1.use('/processograms', processogramRoutes);
+apiV1.use('/processogram-data', processogramDataRoutes);
+apiV1.use('/processogram-questions', processogramQuestionRoutes);
+apiV1.use('/chat', chatRoutes);
 
-// Rotas de espécies
-import specieRoutes from './presentation/routes/specieRoutes';
-app.use('/species', specieRoutes);
-
-// Rotas de módulos de produção
-import productionModuleRoutes from './presentation/routes/productionModuleRoutes';
-app.use('/production-modules', productionModuleRoutes);
-
-// Rotas de processogramas
-import processogramRoutes from './presentation/routes/processogramRoutes';
-app.use('/processograms', processogramRoutes);
-
-// Rotas de dados de processograma (Human-in-the-Loop)
-import processogramDataRoutes from './presentation/routes/processogramDataRoutes';
-app.use('/processogram-data', processogramDataRoutes);
-
-// Rotas de questões de processograma (Human-in-the-Loop)
-import processogramQuestionRoutes from './presentation/routes/processogramQuestionRoutes';
-app.use('/processogram-questions', processogramQuestionRoutes);
-
-// Rotas de chat contextual (Streaming)
-import chatRoutes from './presentation/routes/chatRoutes';
-app.use('/chat', chatRoutes);
+app.use('/api/v1', apiV1);
 
 /**
  * Função principal para iniciar o servidor
@@ -86,7 +85,7 @@ const startServer = async () => {
       console.log(`🚀 Servidor rodando na porta ${PORT}`);
       console.log(`🌐 Ambiente: ${process.env.NODE_ENV}`);
       console.log(`📍 URL: http://localhost:${PORT}`);
-      console.log(`💚 Health Check: http://localhost:${PORT}/health`);
+      console.log(`💚 Health Check: http://localhost:${PORT}/api/v1/health`);
       console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
     });
   } catch (error) {

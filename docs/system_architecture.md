@@ -2,31 +2,82 @@
 
 ## Visão Geral
 
-O WelfareData Backend segue os princípios de **Clean Architecture**, organizando o código em camadas concêntricas com dependência unidirecional: camadas internas não conhecem camadas externas. Essa abordagem garante testabilidade, manutenibilidade e independência de frameworks.
+O WelfareData é uma aplicação **monolítica integrada**: um único servidor Express serve a API REST (sob `/api/v1`) e, em produção, os estáticos do frontend Next.js. O backend segue os princípios de **Clean Architecture**, com camadas concêntricas e dependência unidirecional.
 
 ---
 
-## Diagrama de Camadas
+## Diagrama Geral
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                     PRESENTATION                            │
-│  Controllers · Routes · Middlewares (Auth, RBAC)            │
-│  Express Request/Response · Zod Validation · SSE Streaming  │
-├─────────────────────────────────────────────────────────────┤
-│                     APPLICATION                             │
-│  Use Cases · Services · Interfaces (Ports)                  │
-│  Orquestração de fluxos · Regras de negócio                 │
-├─────────────────────────────────────────────────────────────┤
-│                     DOMAIN                                  │
-│  Interfaces (Entities) · Tipos puros                        │
-│  IUser · ISpecie · IProcessogram · IProcessogramData        │
-├─────────────────────────────────────────────────────────────┤
-│                     INFRASTRUCTURE                          │
-│  Models (Mongoose) · Database · Services · Config           │
-│  GCS · Gemini · SVGO · Puppeteer · Sharp · Multer           │
-└─────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────┐
+│                         CLIENT (Browser)                            │
+│  Next.js 15 · App Router · Tailwind · shadcn/ui · Framer Motion    │
+│  TanStack Query · React Zoom Pan Pinch · SSE Consumer              │
+└────────────────────────────┬────────────────────────────────────────┘
+                             │ HTTP / SSE
+                             │ Cookies HttpOnly
+                             ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│                       EXPRESS SERVER (:8080)                         │
+│                                                                     │
+│  GET /                  → "API v1 running. Frontend under..."       │
+│  /api/v1/*              → API REST + SSE (todas as rotas)           │
+│  /* (produção)          → Next.js estáticos (build output)          │
+│                                                                     │
+├─────────────────────────────────────────────────────────────────────┤
+│                     PRESENTATION LAYER                              │
+│  Controllers · Routes · Middlewares (Auth, RBAC)                    │
+│  Express Request/Response · Zod Validation · SSE Streaming          │
+├─────────────────────────────────────────────────────────────────────┤
+│                     APPLICATION LAYER                               │
+│  Use Cases · Services · Interfaces (Ports)                          │
+│  Orquestração de fluxos · Regras de negócio                         │
+├─────────────────────────────────────────────────────────────────────┤
+│                     DOMAIN LAYER                                    │
+│  Interfaces (Entities) · Tipos puros                                │
+│  IUser · ISpecie · IProcessogram · IProcessogramData                │
+├─────────────────────────────────────────────────────────────────────┤
+│                     INFRASTRUCTURE LAYER                            │
+│  Models (Mongoose) · Database · Services · Config                   │
+│  GCS · Gemini · SVGO · Puppeteer · Sharp · Multer                   │
+└──────────┬──────────────────┬──────────────────┬────────────────────┘
+           │                  │                  │
+           ▼                  ▼                  ▼
+     ┌──────────┐    ┌──────────────┐    ┌────────────┐
+     │ MongoDB  │    │ Google Cloud │    │  Google    │
+     │ Atlas    │    │ Storage      │    │  Gemini    │
+     └──────────┘    └──────────────┘    └────────────┘
 ```
+
+---
+
+## Estratégia de Deploy: Monolito Integrado
+
+### Produção
+
+Em produção, o Express serve o build estático do Next.js como middleware:
+
+```
+Express Server (:8080)
+├── /api/v1/*        → API handlers (rotas Express)
+└── /*               → next.js static export (HTML/JS/CSS)
+```
+
+O Next.js é compilado com `next build` e o output é servido pelo Express via `express.static()` ou via custom server integration. Isso elimina a necessidade de dois processos separados e simplifica o deploy em containers (Docker) ou Cloud Run.
+
+### Desenvolvimento
+
+Em desenvolvimento, frontend e backend rodam como processos separados para hot-reload independente:
+
+```
+┌────────────────────────┐     ┌────────────────────────┐
+│  Next.js Dev Server    │     │  Express Dev Server    │
+│  :3000                 │────►│  :8080                 │
+│  (npm run dev)         │proxy│  (npm run dev)         │
+└────────────────────────┘     └────────────────────────┘
+```
+
+O `next.config.ts` define `rewrites` para proxiar chamadas `/api/v1/*` para `http://localhost:8080/api/v1`, simulando o ambiente de produção.
 
 ---
 
@@ -178,12 +229,14 @@ src/presentation/
 ## Servidor (`src/server.ts`)
 
 - **Express 5** com `express.json()`, `express.urlencoded()`, `cookie-parser`
+- **Namespace:** Todas as rotas API sob `/api/v1` via `express.Router()`
+- **Endpoint raiz:** `GET /` retorna status temporário (frontend em construção)
 - **Timeout middleware** adaptativo:
   - 30s para rotas padrão
   - 360s (6 min) para POST/PUT de processogramas (SVG processing)
-  - Sem timeout para `POST /chat/stream` (SSE)
+  - Sem timeout para `POST /api/v1/chat/stream` (SSE)
 - **Graceful shutdown:** Captura SIGTERM/SIGINT, encerra browsers Puppeteer pendentes
-- **Health check:** `GET /health` com status, timestamp e environment
+- **Health check:** `GET /api/v1/health` com status, timestamp e environment
 
 ---
 
