@@ -22,6 +22,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { useAuthStore } from "@/store/authStore";
 import { NAV_ITEMS } from "./nav-config";
 
 interface AppHeaderProps {
@@ -52,7 +53,18 @@ function buildBreadcrumbs(pathname: string) {
 export function AppHeader({ onMenuToggle }: AppHeaderProps) {
   const pathname = usePathname();
   const { theme, setTheme } = useTheme();
+  const user = useAuthStore((s) => s.user);
+  const logout = useAuthStore((s) => s.logout);
   const breadcrumbs = buildBreadcrumbs(pathname);
+
+  const initials = user?.name
+    ? user.name
+        .split(" ")
+        .map((n) => n[0])
+        .join("")
+        .slice(0, 2)
+        .toUpperCase()
+    : "WF";
 
   return (
     <header className="sticky top-0 z-50 flex h-14 shrink-0 items-center gap-3 border-b border-border/40 bg-background/80 px-4 backdrop-blur-xl supports-backdrop-filter:bg-background/60">
@@ -107,7 +119,7 @@ export function AppHeader({ onMenuToggle }: AppHeaderProps) {
             <Button variant="ghost" className="relative size-9 rounded-full">
               <Avatar className="size-8 border border-border/60">
                 <AvatarFallback className="bg-primary/10 text-xs font-bold text-primary">
-                  WF
+                  {initials}
                 </AvatarFallback>
               </Avatar>
             </Button>
@@ -115,9 +127,9 @@ export function AppHeader({ onMenuToggle }: AppHeaderProps) {
           <DropdownMenuContent align="end" className="w-48">
             <DropdownMenuLabel className="font-normal">
               <div className="flex flex-col gap-1">
-                <p className="text-sm font-medium">Operador</p>
+                <p className="text-sm font-medium">{user?.name ?? "Operador"}</p>
                 <p className="text-xs text-muted-foreground">
-                  admin@welfaredata.org
+                  {user?.email ?? "—"}
                 </p>
               </div>
             </DropdownMenuLabel>
@@ -125,7 +137,10 @@ export function AppHeader({ onMenuToggle }: AppHeaderProps) {
             <DropdownMenuItem>Perfil</DropdownMenuItem>
             <DropdownMenuItem>Configurações</DropdownMenuItem>
             <DropdownMenuSeparator />
-            <DropdownMenuItem className="text-destructive focus:text-destructive">
+            <DropdownMenuItem
+              className="text-destructive focus:text-destructive"
+              onClick={() => logout()}
+            >
               Sair
             </DropdownMenuItem>
           </DropdownMenuContent>
