@@ -1,5 +1,7 @@
 import axios from "axios";
 
+const PUBLIC_PATHS = ["/view"];
+
 export const api = axios.create({
   baseURL: "/api/v1",
   withCredentials: true,
@@ -13,7 +15,12 @@ api.interceptors.response.use(
       error.response?.status === 401 &&
       !error.config?.url?.includes("/auth/")
     ) {
-      window.location.href = "/login";
+      const isPublicPage = PUBLIC_PATHS.some((p) =>
+        window.location.pathname.startsWith(p)
+      );
+      if (!isPublicPage) {
+        window.location.href = "/login";
+      }
     }
     return Promise.reject(error);
   }

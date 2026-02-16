@@ -6,6 +6,7 @@ import { GetProcessogramUseCase } from '../../application/useCases/processogram/
 import { UpdateProcessogramUseCase } from '../../application/useCases/processogram/UpdateProcessogramUseCase';
 import { DeleteProcessogramUseCase } from '../../application/useCases/processogram/DeleteProcessogramUseCase';
 import { UPLOAD_ERRORS } from '../../infrastructure/config/upload';
+import { getStorageService } from '../../infrastructure/services/storage/GoogleStorageService';
 
 export class ProcessogramController {
   static async create(req: Request, res: Response) {
@@ -97,6 +98,36 @@ export class ProcessogramController {
         return res.status(404).json({ error: error.message });
       }
       console.error('ProcessogramController.show error:', error);
+      return res.status(500).json({ error: 'Internal Server Error' });
+    }
+  }
+
+  static async svg(req: Request, res: Response) {
+    const useCase = new GetProcessogramUseCase();
+    try {
+      const id = req.params.id as string;
+      const theme = (req.query.theme as string) === 'light' ? 'light' : 'dark';
+      const processogram = await useCase.execute(id);
+
+      const svgUrl = theme === 'dark'
+        ? processogram.svg_url_dark ?? processogram.svg_url_light
+        : processogram.svg_url_light ?? processogram.svg_url_dark;
+
+      if (!svgUrl) {
+        return res.status(404).json({ error: 'SVG not available for this processogram' });
+      }
+
+      const storage = getStorageService();
+      const svgContent = await storage.downloadAsText(svgUrl);
+
+      res.setHeader('Content-Type', 'image/svg+xml');
+      res.setHeader('Cache-Control', 'public, max-age=3600');
+      return res.status(200).send(svgContent);
+    } catch (error: any) {
+      if (error.message === 'Processogram not found') {
+        return res.status(404).json({ error: error.message });
+      }
+      console.error('ProcessogramController.svg error:', error);
       return res.status(500).json({ error: 'Internal Server Error' });
     }
   }

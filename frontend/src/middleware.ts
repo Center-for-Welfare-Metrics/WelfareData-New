@@ -1,10 +1,14 @@
 import { NextResponse, type NextRequest } from "next/server";
 
 const PROTECTED_PREFIXES = ["/admin"];
+const PUBLIC_PREFIXES = ["/view", "/login"];
 const AUTH_ROUTES = ["/login"];
 const COOKIE_NAME = "token";
 
 function isProtected(pathname: string) {
+  if (PUBLIC_PREFIXES.some((prefix) => pathname.startsWith(prefix))) {
+    return false;
+  }
   return PROTECTED_PREFIXES.some((prefix) => pathname.startsWith(prefix));
 }
 

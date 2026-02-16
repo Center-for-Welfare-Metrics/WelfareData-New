@@ -9,8 +9,12 @@ import { uploadSvg } from '../../infrastructure/config/upload';
 
 const router = Router();
 
+// Private — Auth required
 router.get('/', AuthMiddleware, ProcessogramController.list);
-router.get('/:id', AuthMiddleware, ProcessogramController.show);
+
+// Public — Accessible without authentication (shareability)
+router.get('/:id', ProcessogramController.show);
+router.get('/:id/svg', ProcessogramController.svg);
 
 router.post(
   '/',
