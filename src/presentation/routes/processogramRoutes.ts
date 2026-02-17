@@ -3,6 +3,7 @@ import { ProcessogramController } from '../controllers/ProcessogramController';
 import { ProcessogramAIController } from '../controllers/ProcessogramAIController';
 import { ProcessogramDataController } from '../controllers/ProcessogramDataController';
 import { ProcessogramQuestionController } from '../controllers/ProcessogramQuestionController';
+import { ChatController } from '../controllers/ChatController';
 import { AuthMiddleware } from '../middlewares/AuthMiddleware';
 import { requireRole } from '../middlewares/RoleMiddleware';
 import { uploadSvg } from '../../infrastructure/config/upload';
@@ -15,6 +16,8 @@ router.get('/', AuthMiddleware, ProcessogramController.list);
 // Public — Accessible without authentication (shareability)
 router.get('/:id', ProcessogramController.show);
 router.get('/:id/svg', ProcessogramController.svg);
+router.get('/:processogramId/data/public', ProcessogramDataController.listByProcessogram);
+router.post('/:processogramId/chat/stream', ChatController.stream);
 
 router.post(
   '/',

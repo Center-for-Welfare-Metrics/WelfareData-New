@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
@@ -9,6 +9,8 @@ import { useTheme } from "next-themes";
 import { api } from "@/lib/api";
 import { useAuthStore } from "@/store/authStore";
 import { ProcessogramViewer } from "@/components/processogram/ProcessogramViewer";
+import { ProcessogramInteractiveLayer } from "@/components/processogram/ProcessogramInteractiveLayer";
+import { SidePanel } from "@/components/processogram/SidePanel";
 import type { Processogram } from "@/types/processogram";
 
 type ViewState =
@@ -21,6 +23,15 @@ export default function PublicViewPage() {
   const { resolvedTheme } = useTheme();
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const [state, setState] = useState<ViewState>({ status: "loading" });
+  const [selectedElementId, setSelectedElementId] = useState<string | null>(null);
+
+  const handleElementSelect = useCallback((elementId: string) => {
+    setSelectedElementId((prev) => (prev === elementId ? null : elementId));
+  }, []);
+
+  const handleClosePanel = useCallback(() => {
+    setSelectedElementId(null);
+  }, []);
 
   useEffect(() => {
     if (!params.id) return;
@@ -144,7 +155,18 @@ export default function PublicViewPage() {
               exit={{ opacity: 0 }}
               className="size-full"
             >
-              <ProcessogramViewer svgContent={state.svgContent} />
+              <ProcessogramInteractiveLayer
+                onElementSelect={handleElementSelect}
+                selectedElementId={selectedElementId}
+              >
+                <ProcessogramViewer svgContent={state.svgContent} />
+              </ProcessogramInteractiveLayer>
+
+              <SidePanel
+                processogramId={params.id!}
+                selectedElementId={selectedElementId}
+                onClose={handleClosePanel}
+              />
             </motion.div>
           )}
         </AnimatePresence>

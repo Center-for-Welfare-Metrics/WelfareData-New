@@ -9,7 +9,7 @@ export class ChatController {
     let input;
     try {
       input = {
-        processogramId: req.body.processogramId,
+        processogramId: req.params.processogramId || req.body.processogramId,
         message: req.body.message,
         history: req.body.history ?? [],
       };
