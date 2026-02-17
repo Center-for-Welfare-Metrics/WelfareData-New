@@ -30,12 +30,12 @@ interface AppHeaderProps {
 }
 
 function buildBreadcrumbs(pathname: string) {
-  if (pathname === "/") {
-    return [{ label: "Dashboard", href: "/" }];
+  if (pathname === "/admin") {
+    return [{ label: "Dashboard", href: "/admin" }];
   }
 
   const segments = pathname.split("/").filter(Boolean);
-  const crumbs = [{ label: "Dashboard", href: "/" }];
+  const crumbs: { label: string; href: string }[] = [];
 
   let accumulated = "";
   for (const segment of segments) {
@@ -47,7 +47,7 @@ function buildBreadcrumbs(pathname: string) {
     crumbs.push({ label, href: accumulated });
   }
 
-  return crumbs;
+  return crumbs.length > 0 ? crumbs : [{ label: "Dashboard", href: "/admin" }];
 }
 
 export function AppHeader({ onMenuToggle }: AppHeaderProps) {

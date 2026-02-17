@@ -2,7 +2,7 @@ import {
   LayoutDashboard,
   Network,
   PawPrint,
-  ShieldCheck,
+  Boxes,
   type LucideIcon,
 } from "lucide-react";
 
@@ -14,8 +14,8 @@ export interface NavItem {
 }
 
 export const NAV_ITEMS: NavItem[] = [
-  { label: "Dashboard", href: "/", icon: LayoutDashboard },
-  { label: "Processogramas", href: "/dashboard", icon: Network },
-  { label: "Espécies", href: "/especies", icon: PawPrint },
-  { label: "Admin", href: "/admin", icon: ShieldCheck, adminOnly: true },
+  { label: "Dashboard", href: "/admin", icon: LayoutDashboard },
+  { label: "Processogramas", href: "/admin/processograms", icon: Network },
+  { label: "Espécies", href: "/admin/species", icon: PawPrint },
+  { label: "Módulos", href: "/admin/modules", icon: Boxes },
 ];

@@ -66,7 +66,7 @@ export function SidebarNav({ onNavigate }: SidebarNavProps) {
   const pathname = usePathname();
 
   const isActive = (href: string) => {
-    if (href === "/") return pathname === "/";
+    if (href === "/admin") return pathname === "/admin";
     return pathname.startsWith(href);
   };
 

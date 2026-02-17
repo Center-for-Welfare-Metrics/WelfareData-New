@@ -22,7 +22,7 @@ import {
 } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 
-export default function DashboardPage() {
+export default function ProcessogramsPage() {
   const { data: processograms, isLoading, isError } = useProcessograms();
   const [uploadOpen, setUploadOpen] = useState(false);
 
@@ -38,7 +38,7 @@ export default function DashboardPage() {
             transition={{ duration: 0.4 }}
           >
             <h1 className="text-2xl font-bold tracking-tight">
-              System Overview
+              Processogramas
             </h1>
             <p className="mt-0.5 text-sm text-muted-foreground font-mono">
               {isLoading
