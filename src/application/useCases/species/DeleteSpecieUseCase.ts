@@ -19,7 +19,7 @@ export class DeleteSpecieUseCase {
 
     return {
       message: 'Specie deleted successfully',
-      id,
+      _id: id,
     };
   }
 }

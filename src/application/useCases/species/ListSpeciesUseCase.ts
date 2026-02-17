@@ -5,7 +5,7 @@ export class ListSpeciesUseCase {
     const species = await SpecieModel.find().sort({ name: 1 });
 
     return species.map((specie) => ({
-      id: specie._id.toString(),
+      _id: specie._id.toString(),
       name: specie.name,
       pathname: specie.pathname,
       description: specie.description,

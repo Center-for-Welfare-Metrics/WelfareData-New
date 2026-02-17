@@ -19,7 +19,7 @@ export class DeleteProductionModuleUseCase {
 
     return {
       message: 'Production module deleted successfully',
-      id,
+      _id: id,
     };
   }
 }

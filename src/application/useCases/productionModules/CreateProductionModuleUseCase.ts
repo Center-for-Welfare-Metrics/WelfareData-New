@@ -2,11 +2,19 @@ import { z } from 'zod';
 import { ProductionModuleModel } from '../../../infrastructure/models/ProductionModuleModel';
 import { SpecieModel } from '../../../infrastructure/models/SpecieModel';
 
+function toSlug(name: string): string {
+  return name
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '');
+}
+
 export const CreateProductionModuleSchema = z.object({
-  name: z.string().min(3, 'Name must have at least 3 characters'),
-  slug: z.string().regex(/^[a-z0-9-]+$/, 'Slug must contain only lowercase letters, numbers and hyphens'),
+  name: z.string().min(1, 'Name is required'),
   description: z.string().optional(),
-  specieId: z.string(),
+  specieId: z.string().min(1, 'specieId is required'),
   creatorId: z.string(),
 });
 
@@ -16,15 +24,15 @@ export class CreateProductionModuleUseCase {
   async execute(input: CreateProductionModuleInput) {
     const data = CreateProductionModuleSchema.parse(input);
 
-    // Verify specie exists
     const specie = await SpecieModel.findById(data.specieId);
     if (!specie) {
       throw new Error('Specie not found');
     }
 
-    // Check if slug already exists for this specie (compound unique)
+    const slug = toSlug(data.name);
+
     const exists = await ProductionModuleModel.findOne({
-      slug: data.slug,
+      slug,
       specieId: data.specieId,
     });
     if (exists) {
@@ -33,20 +41,21 @@ export class CreateProductionModuleUseCase {
 
     const module = await ProductionModuleModel.create({
       name: data.name,
-      slug: data.slug,
+      slug,
       description: data.description,
       specieId: data.specieId,
       creatorId: data.creatorId,
     });
 
     return {
-      id: module._id.toString(),
+      _id: module._id.toString(),
       name: module.name,
       slug: module.slug,
       description: module.description,
       specieId: module.specieId,
       creatorId: module.creatorId,
       createdAt: module.createdAt,
+      updatedAt: module.updatedAt,
     };
   }
 }

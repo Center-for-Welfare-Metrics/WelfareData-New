@@ -33,6 +33,7 @@ export class ProductionModuleController {
       if (error.message.includes('already exists for this specie')) {
         return res.status(409).json({ error: error.message });
       }
+      console.error('[ProductionModuleController.create]', error);
       return res.status(500).json({ error: 'Internal Server Error' });
     }
   }
@@ -44,6 +45,7 @@ export class ProductionModuleController {
       const modules = await useCase.execute(specieId);
       return res.status(200).json(modules);
     } catch (error: any) {
+      console.error('[ProductionModuleController.list]', error);
       return res.status(500).json({ error: 'Internal Server Error' });
     }
   }
@@ -70,6 +72,7 @@ export class ProductionModuleController {
       if (error.message.includes('Cannot update slug')) {
         return res.status(400).json({ error: error.message });
       }
+      console.error('[ProductionModuleController.update]', error);
       return res.status(500).json({ error: 'Internal Server Error' });
     }
   }
@@ -87,6 +90,7 @@ export class ProductionModuleController {
       if (error.message.includes('Cannot delete production module with associated')) {
         return res.status(409).json({ error: error.message });
       }
+      console.error('[ProductionModuleController.delete]', error);
       return res.status(500).json({ error: 'Internal Server Error' });
     }
   }

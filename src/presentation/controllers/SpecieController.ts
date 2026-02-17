@@ -30,16 +30,18 @@ export class SpecieController {
       if (error.message === 'Specie with this pathname already exists') {
         return res.status(409).json({ error: error.message });
       }
+      console.error('[SpecieController.create]', error);
       return res.status(500).json({ error: 'Internal Server Error' });
     }
   }
 
-  static async list(req: Request, res: Response) {
+  static async list(_req: Request, res: Response) {
     const useCase = new ListSpeciesUseCase();
     try {
       const species = await useCase.execute();
       return res.status(200).json(species);
     } catch (error: any) {
+      console.error('[SpecieController.list]', error);
       return res.status(500).json({ error: 'Internal Server Error' });
     }
   }
@@ -66,6 +68,7 @@ export class SpecieController {
       if (error.message.includes('Cannot update pathname')) {
         return res.status(400).json({ error: error.message });
       }
+      console.error('[SpecieController.update]', error);
       return res.status(500).json({ error: 'Internal Server Error' });
     }
   }
@@ -83,6 +86,7 @@ export class SpecieController {
       if (error.message.includes('Cannot delete specie with associated')) {
         return res.status(409).json({ error: error.message });
       }
+      console.error('[SpecieController.delete]', error);
       return res.status(500).json({ error: 'Internal Server Error' });
     }
   }

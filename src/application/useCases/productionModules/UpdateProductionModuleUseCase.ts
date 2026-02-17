@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { ProductionModuleModel } from '../../../infrastructure/models/ProductionModuleModel';
 
 export const UpdateProductionModuleSchema = z.object({
-  name: z.string().min(3, 'Name must have at least 3 characters').optional(),
+  name: z.string().min(1, 'Name is required').optional(),
   description: z.string().optional(),
 });
 
@@ -17,13 +17,10 @@ export class UpdateProductionModuleUseCase {
       throw new Error('Production module not found');
     }
 
-    // CRITICAL: slug is immutable after creation to preserve file system integrity
-    // Same logic as Specie pathname
     if ('slug' in input) {
       throw new Error('Cannot update slug: it is immutable after creation to preserve file integrity');
     }
 
-    // Check name uniqueness within same specie if being updated
     if (data.name && data.name !== module.name) {
       const exists = await ProductionModuleModel.findOne({
         name: data.name,
@@ -45,7 +42,7 @@ export class UpdateProductionModuleUseCase {
     }
 
     return {
-      id: updated._id.toString(),
+      _id: updated._id.toString(),
       name: updated.name,
       slug: updated.slug,
       description: updated.description,

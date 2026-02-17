@@ -6,7 +6,7 @@ export class ListProductionModulesUseCase {
     const modules = await ProductionModuleModel.find(filter).sort({ name: 1 });
 
     return modules.map((module) => ({
-      id: module._id.toString(),
+      _id: module._id.toString(),
       name: module.name,
       slug: module.slug,
       description: module.description,
