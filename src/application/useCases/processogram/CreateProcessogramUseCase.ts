@@ -133,7 +133,7 @@ export class CreateProcessogramUseCase {
 
     // Step 11: Return created document
     return {
-      id: processogram._id.toString(),
+      _id: processogram._id.toString(),
       identifier: processogram.identifier,
       name: processogram.name,
       slug: processogram.slug,
@@ -145,6 +145,7 @@ export class CreateProcessogramUseCase {
       raster_images_count: Object.keys(rasterImagesLight).length,
       metadata: processedSvg.metadata,
       createdAt: processogram.createdAt,
+      updatedAt: processogram.updatedAt,
     };
   }
 }

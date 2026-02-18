@@ -2,6 +2,9 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   reactCompiler: true,
+  experimental: {
+    proxyTimeout: 360_000,
+  },
   async rewrites() {
     return [
       {
