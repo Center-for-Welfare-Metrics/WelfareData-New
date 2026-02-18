@@ -5,10 +5,25 @@ import { ListProcessogramsUseCase } from '../../application/useCases/processogra
 import { GetProcessogramUseCase } from '../../application/useCases/processogram/GetProcessogramUseCase';
 import { UpdateProcessogramUseCase } from '../../application/useCases/processogram/UpdateProcessogramUseCase';
 import { DeleteProcessogramUseCase } from '../../application/useCases/processogram/DeleteProcessogramUseCase';
+import { AnalyzeProcessogramUseCase } from '../../application/useCases/processogram/AnalyzeProcessogramUseCase';
 import { UPLOAD_ERRORS } from '../../infrastructure/config/upload';
 import { getStorageService } from '../../infrastructure/services/storage/GoogleStorageService';
 
 export class ProcessogramController {
+  private static triggerBackgroundAnalysis(processogramId: string) {
+    const useCase = new AnalyzeProcessogramUseCase();
+    useCase.execute(processogramId).then((result) => {
+      console.log(`[BackgroundAnalysis] Completed for ${processogramId}:`, {
+        elementsFound: result.elementsFound,
+        descriptionsUpserted: result.descriptionsUpserted,
+        questionsUpserted: result.questionsUpserted,
+        errors: result.errors,
+      });
+    }).catch((err) => {
+      console.error(`[BackgroundAnalysis] Failed for ${processogramId}:`, err.message);
+    });
+  }
+
   static async create(req: Request, res: Response) {
     const useCase = new CreateProcessogramUseCase();
 
@@ -32,6 +47,8 @@ export class ProcessogramController {
         },
         req.file.buffer
       );
+
+      ProcessogramController.triggerBackgroundAnalysis(processogram._id);
 
       return res.status(201).json(processogram);
     } catch (error: any) {
@@ -156,6 +173,11 @@ export class ProcessogramController {
         req.body,
         req.file?.buffer
       );
+
+      if (req.file) {
+        ProcessogramController.triggerBackgroundAnalysis(id);
+      }
+
       return res.status(200).json(processogram);
     } catch (error: any) {
       if (error instanceof ZodError) {

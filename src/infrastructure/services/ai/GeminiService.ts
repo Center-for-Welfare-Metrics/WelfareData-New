@@ -1,4 +1,5 @@
 import { GoogleGenerativeAI, Content } from '@google/generative-ai';
+import { buildDescriptionPrompt, buildQuestionsPrompt } from './prompts';
 
 export interface ElementInput {
   elementId: string;
@@ -14,6 +15,17 @@ interface ElementAnalysis {
 
 export interface BulkAnalysisResult {
   elements: ElementAnalysis[];
+}
+
+export interface ElementQuestion {
+  elementId: string;
+  question: string;
+  options: string[];
+  correctAnswerIndex: number;
+}
+
+export interface BulkQuestionsResult {
+  questions: ElementQuestion[];
 }
 
 export interface ChatMessage {
@@ -33,9 +45,7 @@ export class GeminiService {
     this.genAI = new GoogleGenerativeAI(apiKey);
   }
 
-  async generateBulkAnalysis(
-    elements: ElementInput[]
-  ): Promise<BulkAnalysisResult> {
+  async generateBulkAnalysis(elements: ElementInput[]): Promise<BulkAnalysisResult> {
     const model = this.genAI.getGenerativeModel({
       model: this.modelName,
       generationConfig: {
@@ -51,45 +61,42 @@ export class GeminiService {
       parents: el.parents,
     }));
 
-    const prompt = `You are an animal scientist specializing in animal production systems.
-
-Your task is to generate clear, accurate, and insightful descriptions of components in detailed diagrams of animal production processes, based on the component's level and name. The level may be production system (root level, overarching process), life-fate (animal's path or destiny), phase (temporal stage), or circumstance (localized structure, space, equipment, operation, or animal in context). Always base descriptions on established and verifiable scientific knowledge, focusing on biological, commercial, and operational relevance, and highlight aspects affecting animal quality of life (e.g., stress, injury risks, behavioral responses) when relevant to the component.
-
-Important:
-
-- Focus the description strictly on the named component, using the parent hierarchy only for brief contextual framing (e.g., "within [parent phase]") without shifting emphasis.
-- Always integrate the species in focus, inferring from parents if not explicit, and tailor details to species-specific traits.
-- Keep descriptions concise (3-6 sentences), neutral, grounded on representative commercial conditions, avoiding speculation.
-- If the item is a 'production system', describe the overall production process, its structure, key sequences, typical stocking densities, housing conditions, light and feed schedules, water or air quality (for land or aquatic species, respectively), husbandry procedures, commercial goals, and broad welfare implications for the animals involved.
-- If the item is a 'life-fate', describe the animal type following this path, characterizing how it is used, its experience, key life stages, and welfare factors like housing conditions, space available, stocking densities, light schedules, whether the environment is barren or enriched, or typical husbandry procedures (handling, immunization, mutilations and other procedures).
-- If the item is a 'phase', describe the typical duration of the phase under commercial conditions, any differences with previous phases, changes in housing conditions or environmental conditions, biological/commercial relevance, role in the sequence, and relevant quality of life impacts (e.g., stressors or enrichments).
-- If the item is a 'circumstance', describe it as a localized structure, space, equipment element animals interact with (e.g., ramp, tray, enclosure, crate) or an animal itself in that context (e.g., a cow being dehorned), including function, design features, and direct welfare effects.
-- If no parents are provided, treat the level as the root production system.
-- If input is invalid or incomplete, output JSON with "description": "Error: Invalid input - [brief reason]".
-
-ELEMENTS TO ANALYZE:
-${JSON.stringify(elementsPayload, null, 2)}
-
-OUTPUT FORMAT (JSON):
-{
-  "elements": [
-    {
-      "elementId": "string (exact same elementId from input)",
-      "description": "string (3-6 sentences)"
-    }
-  ]
-}
-
-Respond ONLY with the JSON, no additional text.`;
-
+    const prompt = buildDescriptionPrompt(elementsPayload);
     const result = await model.generateContent(prompt);
-    const response = result.response;
-    const text = response.text();
+    const text = result.response.text();
 
     try {
       return JSON.parse(text) as BulkAnalysisResult;
     } catch {
-      throw new Error(`Gemini returned invalid JSON: ${text.slice(0, 200)}`);
+      throw new Error(`Gemini returned invalid JSON (descriptions): ${text.slice(0, 200)}`);
+    }
+  }
+
+  async generateBulkQuestions(
+    elementsWithDescriptions: {
+      elementId: string;
+      level: string;
+      name: string;
+      parents: string;
+      description: string;
+    }[]
+  ): Promise<BulkQuestionsResult> {
+    const model = this.genAI.getGenerativeModel({
+      model: this.modelName,
+      generationConfig: {
+        responseMimeType: 'application/json',
+        temperature: 0.5,
+      },
+    });
+
+    const prompt = buildQuestionsPrompt(elementsWithDescriptions);
+    const result = await model.generateContent(prompt);
+    const text = result.response.text();
+
+    try {
+      return JSON.parse(text) as BulkQuestionsResult;
+    } catch {
+      throw new Error(`Gemini returned invalid JSON (questions): ${text.slice(0, 200)}`);
     }
   }
 
