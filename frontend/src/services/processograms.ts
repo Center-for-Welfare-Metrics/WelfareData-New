@@ -1,9 +1,28 @@
 import { api } from "@/lib/api";
-import type { Processogram } from "@/types/processogram";
+import type { Processogram, ProcessogramElement, ProcessogramQuestion } from "@/types/processogram";
 
 export const processogramService = {
   async getAll(): Promise<Processogram[]> {
     const { data } = await api.get<Processogram[]>("/processograms");
+    return data;
+  },
+
+  async getById(id: string): Promise<Processogram> {
+    const { data } = await api.get<Processogram>(`/processograms/${id}`);
+    return data;
+  },
+
+  async getElementData(processogramId: string): Promise<ProcessogramElement[]> {
+    const { data } = await api.get<ProcessogramElement[]>(
+      `/processograms/${processogramId}/data/public`
+    );
+    return data;
+  },
+
+  async getQuestions(processogramId: string): Promise<ProcessogramQuestion[]> {
+    const { data } = await api.get<ProcessogramQuestion[]>(
+      `/processograms/${processogramId}/questions`
+    );
     return data;
   },
 

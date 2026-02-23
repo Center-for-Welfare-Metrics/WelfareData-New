@@ -11,7 +11,9 @@ import { useAuthStore } from "@/store/authStore";
 import { ProcessogramViewer } from "@/components/processogram/ProcessogramViewer";
 import { ProcessogramInteractiveLayer } from "@/components/processogram/ProcessogramInteractiveLayer";
 import { SidePanel } from "@/components/processogram/SidePanel";
-import type { Processogram } from "@/types/processogram";
+import { useProcessogramState } from "@/hooks/useProcessogramState";
+import { processogramService } from "@/services/processograms";
+import type { Processogram, ProcessogramElement, ProcessogramQuestion } from "@/types/processogram";
 
 type ViewState =
   | { status: "loading" }
@@ -23,15 +25,38 @@ export default function PublicViewPage() {
   const { resolvedTheme } = useTheme();
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const [state, setState] = useState<ViewState>({ status: "loading" });
-  const [selectedElementId, setSelectedElementId] = useState<string | null>(null);
+  const [elements, setElements] = useState<ProcessogramElement[]>([]);
+  const [questions, setQuestions] = useState<ProcessogramQuestion[]>([]);
 
-  const handleElementSelect = useCallback((elementId: string) => {
-    setSelectedElementId((prev) => (prev === elementId ? null : elementId));
-  }, []);
+  const navigationState = useProcessogramState(elements, questions);
 
-  const handleClosePanel = useCallback(() => {
-    setSelectedElementId(null);
-  }, []);
+  const {
+    selectedElementId,
+    activeElementData,
+    breadcrumbPath,
+    selectElement,
+    clearSelection,
+    navigateUp,
+  } = navigationState;
+
+  const handleElementSelect = useCallback(
+    (elementId: string) => {
+      if (selectedElementId === elementId) {
+        clearSelection();
+      } else {
+        selectElement(elementId);
+      }
+    },
+    [selectedElementId, selectElement, clearSelection]
+  );
+
+  useEffect(() => {
+    console.log("Current State:", {
+      selectedElementId,
+      breadcrumbPath,
+      activeElementData,
+    });
+  }, [selectedElementId, breadcrumbPath, activeElementData]);
 
   useEffect(() => {
     if (!params.id) return;
@@ -57,6 +82,16 @@ export default function PublicViewPage() {
           ]);
 
         setState({ status: "ready", processogram, svgContent });
+
+        processogramService
+          .getElementData(params.id!)
+          .then(setElements)
+          .catch(() => {});
+
+        processogramService
+          .getQuestions(params.id!)
+          .then(setQuestions)
+          .catch(() => {});
       } catch (err: unknown) {
         if ((err as Error).name === "CanceledError") return;
         if ((err as Error).name === "AbortError") return;
@@ -165,7 +200,10 @@ export default function PublicViewPage() {
               <SidePanel
                 processogramId={params.id!}
                 selectedElementId={selectedElementId}
-                onClose={handleClosePanel}
+                onClose={clearSelection}
+                activeElementData={activeElementData}
+                breadcrumbPath={breadcrumbPath}
+                onBreadcrumbClick={navigateUp}
               />
             </motion.div>
           )}

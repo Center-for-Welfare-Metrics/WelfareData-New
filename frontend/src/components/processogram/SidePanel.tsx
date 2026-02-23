@@ -5,6 +5,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { X, Scan, Database } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ChatWidget } from "@/components/chat/ChatWidget";
+import type { ActiveElementData, BreadcrumbItem } from "@/types/processogram";
 
 interface ElementData {
   elementId: string;
@@ -15,6 +16,9 @@ interface SidePanelProps {
   processogramId: string;
   selectedElementId: string | null;
   onClose: () => void;
+  activeElementData?: ActiveElementData | null;
+  breadcrumbPath?: BreadcrumbItem[];
+  onBreadcrumbClick?: (levelIndex: number) => void;
 }
 
 const panelVariants = {
@@ -42,6 +46,13 @@ export function SidePanel({
   processogramId,
   selectedElementId,
   onClose,
+  /* Navigation props — wired for future Breadcrumb / Questions UI */
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  activeElementData,
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  breadcrumbPath,
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  onBreadcrumbClick,
 }: SidePanelProps) {
   const [elementData, setElementData] = useState<ElementData | null>(null);
   const [loadingData, setLoadingData] = useState(false);
