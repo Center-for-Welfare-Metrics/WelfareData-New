@@ -70,28 +70,43 @@ interface CameraControllerProps {
   wrapperRef: React.RefObject<HTMLDivElement | null>;
 }
 
+/**
+ * Extrai o ID real do elemento a partir do token de zoom.
+ * Formato: "zoom__<realId>__<levelIdx>__<timestamp>"
+ * Fallback: devolve o próprio valor se não seguir o formato.
+ */
+function extractRealId(zoomToken: string): string {
+  if (!zoomToken.startsWith("zoom__")) return zoomToken;
+  const parts = zoomToken.split("__");
+  // parts = ["zoom", realId, levelIdx, timestamp]
+  return parts[1] ?? zoomToken;
+}
+
 function CameraController({ zoomTargetId, wrapperRef }: CameraControllerProps) {
-  const { zoomToElement, resetTransform } = useControls();
+  const { zoomToElement, centerView } = useControls();
   const prevTargetRef = useRef<string | null>(null);
 
   useEffect(() => {
+    // --- Reset: volta à visão geral sem catapultar ---
     if (!zoomTargetId) {
       if (prevTargetRef.current !== null) {
-        resetTransform(ZOOM_ANIMATION_MS, "easeInOutCubic");
+        centerView(1, ZOOM_ANIMATION_MS, "easeInOutCubic");
         prevTargetRef.current = null;
       }
       return;
     }
 
+    // --- Mesma transição: ignora ---
     if (zoomTargetId === prevTargetRef.current) return;
     prevTargetRef.current = zoomTargetId;
 
-    const scale = computeDynamicScale(zoomTargetId, wrapperRef.current);
+    const realId = extractRealId(zoomTargetId);
+    const scale = computeDynamicScale(realId, wrapperRef.current);
 
     requestAnimationFrame(() => {
-      zoomToElement(zoomTargetId, scale, ZOOM_ANIMATION_MS, "easeInOutCubic");
+      zoomToElement(realId, scale, ZOOM_ANIMATION_MS, "easeInOutCubic");
     });
-  }, [zoomTargetId, zoomToElement, resetTransform, wrapperRef]);
+  }, [zoomTargetId, zoomToElement, centerView, wrapperRef]);
 
   return null;
 }

@@ -163,8 +163,10 @@ export function useProcessogramState(
       const targetCrumb = path[levelIdx];
       if (!targetCrumb) return;
 
+      const newZoomId = `zoom__${targetCrumb.id}__${levelIdx}__${Date.now()}`;
+
       setActiveLevelIndex(levelIdx);
-      setZoomTargetId(targetCrumb.id);
+      setZoomTargetId(newZoomId);
       setSelectedElementId(targetCrumb.id);
 
       const data = buildActiveData(targetCrumb.id);
@@ -183,28 +185,22 @@ export function useProcessogramState(
       const fullPath = buildHierarchyFromDom(clickedId);
       if (fullPath.length === 0) return;
 
-      if (pendingTargetRef.current === clickedId && breadcrumbPath.length > 0) {
-        const currentIdx = activeLevelIndex;
-        const targetFinalIdx = fullPath.findIndex((c) => c.id === clickedId);
+      const clickedIdx = fullPath.findIndex((c) => c.id === clickedId);
+      if (clickedIdx === -1) return;
 
-        if (targetFinalIdx === -1) {
-          setBreadcrumbPath(fullPath);
-          applyLevelState(fullPath, fullPath.length - 1);
-          pendingTargetRef.current = null;
-          return;
-        }
+      const isSameTarget = pendingTargetRef.current === clickedId;
 
-        const nextIdx = Math.min(currentIdx + 1, targetFinalIdx);
+      if (isSameTarget && breadcrumbPath.length > 0 && activeLevelIndex >= 0) {
+        const nextIdx = activeLevelIndex + 1;
 
-        if (nextIdx <= currentIdx) {
-          pendingTargetRef.current = null;
+        if (nextIdx > clickedIdx) {
           return;
         }
 
         setBreadcrumbPath(fullPath);
         applyLevelState(fullPath, nextIdx);
 
-        if (nextIdx >= targetFinalIdx) {
+        if (nextIdx >= clickedIdx) {
           pendingTargetRef.current = null;
         }
         return;
@@ -213,11 +209,9 @@ export function useProcessogramState(
       pendingTargetRef.current = clickedId;
       setBreadcrumbPath(fullPath);
 
-      const clickedIdx = fullPath.findIndex((c) => c.id === clickedId);
-
-      if (clickedIdx <= 0) {
+      if (clickedIdx === 0) {
         applyLevelState(fullPath, 0);
-        if (clickedIdx === 0) pendingTargetRef.current = null;
+        pendingTargetRef.current = null;
       } else {
         applyLevelState(fullPath, 0);
       }

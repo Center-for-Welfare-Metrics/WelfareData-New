@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useRef, useEffect, type ReactNode } from "react";
+import { isAnalyzableId } from "@/hooks/useProcessogramState";
 
 const HIGHLIGHT_CLASS = "processogram-element-highlight";
 const HIGHLIGHT_DURATION = 2000;
@@ -11,13 +12,31 @@ interface ProcessogramInteractiveLayerProps {
   selectedElementId: string | null;
 }
 
-function cleanId(raw: string): string {
-  return raw.replace(/^#/, "").trim();
-}
-
-function findClickableAncestor(target: EventTarget | null): Element | null {
+function resolveDeepestAnalyzableNode(target: EventTarget | null): Element | null {
   if (!(target instanceof Element)) return null;
-  return target.closest("[id]");
+
+  const self = target as Element;
+
+  const selfId = self.getAttribute("id");
+  if (selfId && isAnalyzableId(selfId)) return self;
+
+  const closest = self.closest("[id]");
+  if (!closest) return null;
+
+  const closestTag = closest.tagName.toLowerCase();
+  if (closestTag === "svg" || closestTag === "html") return null;
+
+  const closestId = closest.getAttribute("id");
+  if (closestId && isAnalyzableId(closestId)) return closest;
+
+  let current = closest.parentElement;
+  while (current && current.tagName.toLowerCase() !== "svg") {
+    const parentId = current.getAttribute("id");
+    if (parentId && isAnalyzableId(parentId)) return current;
+    current = current.parentElement;
+  }
+
+  return null;
 }
 
 export function ProcessogramInteractiveLayer({
@@ -77,17 +96,16 @@ export function ProcessogramInteractiveLayer({
 
   const handleClick = useCallback(
     (e: React.MouseEvent) => {
-      const ancestor = findClickableAncestor(e.target);
-      if (!ancestor) return;
+      e.stopPropagation();
 
-      const id = ancestor.getAttribute("id");
+      const node = resolveDeepestAnalyzableNode(e.target);
+      if (!node) return;
+
+      const id = node.getAttribute("id");
       if (!id) return;
 
-      const cleaned = cleanId(id);
-      if (!cleaned || cleaned === "svg" || cleaned.startsWith("__")) return;
-
-      applyHighlight(ancestor);
-      onElementSelect(cleaned);
+      applyHighlight(node);
+      onElementSelect(id);
     },
     [onElementSelect, applyHighlight]
   );

@@ -240,3 +240,71 @@ Clique no SVG
 - **useProcessogramState**: O único componente que entende a lógica de navegação hierárquica.
 
 Esta separação permite testar cada componente isoladamente e substituir qualquer parte (ex: trocar a biblioteca de zoom) sem afetar a lógica de negócio.
+
+---
+
+## Troubleshooting de Event Bubbling
+
+### Problema Original
+
+Elementos-pai transparentes (como `<g id="fase--lf">`) interceptavam cliques destinados a
+filhos menores e visíveis (como `<rect id="circunstancia--ci_03">`). Isso acontecia porque o
+handler antigo usava `target.closest("[id]")`, que encontrava **qualquer** ancestral com atributo
+`id` — não necessariamente um elemento analisável.
+
+### Causa Raiz
+
+1. O SVG exportado frequentemente contém grupos (`<g>`) com IDs arbitrários (ex: `layer1`,
+   `grupo-23`). Esses IDs **não** seguem o padrão analisável (`--ps`, `--lf`, `--ph`, `--ci`).
+2. `closest("[id]")` subia a árvore DOM e retornava o **primeiro** ancestral com qualquer `id`,
+   que frequentemente era um `<g>` pai transparente cobrindo toda a área.
+3. O click handler propagava para cima, fazendo com que múltiplos handlers disparassem.
+
+### Solução Implementada
+
+#### `resolveDeepestAnalyzableNode(startNode)` em `ProcessogramInteractiveLayer.tsx`
+
+```
+1. Começa no e.target (o elemento SVG mais profundo sob o cursor)
+2. Se o próprio target tem id analisável → retorna ele
+3. Senão, usa closest('[id]') para achar o ancestral mais próximo com id
+4. Se esse ancestral tem id analisável → retorna ele
+5. Se não, caminha para cima (parentElement) repetindo o teste
+6. Só retorna null se nenhum ancestral no caminho é analisável
+```
+
+#### Filtro `isAnalyzableId(id)`
+
+Reutiliza o padrão regex `ANALYZABLE_PATTERN = /(?:--|_)(ps|lf|ph|ci)(?:[_-]\d+[_-]?)?$/` já
+exportado pelo hook `useProcessogramState`. Isso garante que **apenas** IDs no formato esperado
+(sufixos `--ps`, `--lf`, `--ph`, `--ci`) sejam aceitos como clicáveis.
+
+#### `e.stopPropagation()`
+
+Adicionado no início do `handleClick` para evitar que o evento borbulhe para handlers de
+ancestrais, eliminando o double-firing.
+
+### Antes vs Depois
+
+| Cenário                         | Antes (bug)                              | Depois (fix)                           |
+| ------------------------------- | ---------------------------------------- | -------------------------------------- |
+| Clique em `circunstancia--ci_3` | Resolvia para `<g id="layer1">` (pai)    | Resolve para `circunstancia--ci_3`     |
+| Clique em área vazia do SVG     | Resolvia para `<g id="svg-root">` (raiz) | `null` → nada acontece                 |
+| Clique em `fase--lf_2`          | Resolvia corretamente                    | Resolvia corretamente                  |
+| Double-click propagado          | Disparava 2 handlers                     | Apenas 1 handler (stopPropagation)     |
+
+### Zoom Token Único
+
+O `zoomTargetId` agora usa formato `zoom__<realId>__<levelIdx>__<timestamp>` em vez do ID bruto.
+Isso garante que o `useEffect` do `CameraController` **sempre** dispare quando o nível muda, mesmo
+que o elemento-alvo do zoom seja o mesmo SVG element em transições intermediárias do Matrioska.
+
+A função `extractRealId()` no `ProcessogramViewer.tsx` extrai o ID real antes de passá-lo a
+`zoomToElement()` e `computeDynamicScale()`.
+
+### Reset sem Catapulta
+
+Trocamos `resetTransform()` por `centerView(1, animTime, easing)` no `CameraController`. O
+`resetTransform()` restaurava a transform matrix para o estado inicial absoluto, que podia não
+corresponder ao viewport atual — causando o SVG a "voar" para fora da tela. O `centerView(1, ...)`
+calcula o centro atual do conteúdo e anima suavemente até ele com scale=1.
