@@ -146,10 +146,68 @@
 
   .processogram-svg-container [id] {
     cursor: pointer;
-    transition: filter 0.15s ease;
   }
 
-  .processogram-svg-container [id]:hover {
+  /* ===================================================================
+   * Visual Isolation System — "Blackout" (Focus & Mute)
+   *
+   * Usa EXCLUSIVAMENTE `filter: brightness()` para escurecer/iluminar
+   * elementos SVG. Nunca altera fill, stroke ou opacity — as matizes
+   * originais (ex: porco rosa → rosa escuro) são 100% preservadas.
+   *
+   * Cascata:
+   *   1. .is-exploring no <svg> → aplica brightness(0.3) em TODOS os filhos
+   *   2. .is-active-zone num <g> → restaura brightness(1) para ele e filhos
+   *   3. .is-target-element num nó → brightness(1) + drop-shadow de destaque
+   * =================================================================== */
+
+  /* Transição suave de filtros em todos os primitivos SVG */
+  .processogram-svg-container svg path,
+  .processogram-svg-container svg rect,
+  .processogram-svg-container svg polygon,
+  .processogram-svg-container svg circle,
+  .processogram-svg-container svg ellipse,
+  .processogram-svg-container svg line,
+  .processogram-svg-container svg polyline,
+  .processogram-svg-container svg text,
+  .processogram-svg-container svg g {
+    transition: filter 0.4s ease-in-out;
+  }
+
+  /* --- Mute Geral: escurece tudo quando em modo exploração --- */
+  .processogram-svg-container svg.is-exploring path,
+  .processogram-svg-container svg.is-exploring rect,
+  .processogram-svg-container svg.is-exploring polygon,
+  .processogram-svg-container svg.is-exploring circle,
+  .processogram-svg-container svg.is-exploring ellipse,
+  .processogram-svg-container svg.is-exploring line,
+  .processogram-svg-container svg.is-exploring polyline,
+  .processogram-svg-container svg.is-exploring text,
+  .processogram-svg-container svg.is-exploring g {
+    filter: brightness(0.3);
+  }
+
+  /* --- Zona Ativa: restaura brilho dentro do nível em foco --- */
+  .processogram-svg-container svg.is-exploring .is-active-zone,
+  .processogram-svg-container svg.is-exploring .is-active-zone path,
+  .processogram-svg-container svg.is-exploring .is-active-zone rect,
+  .processogram-svg-container svg.is-exploring .is-active-zone polygon,
+  .processogram-svg-container svg.is-exploring .is-active-zone circle,
+  .processogram-svg-container svg.is-exploring .is-active-zone ellipse,
+  .processogram-svg-container svg.is-exploring .is-active-zone line,
+  .processogram-svg-container svg.is-exploring .is-active-zone polyline,
+  .processogram-svg-container svg.is-exploring .is-active-zone text,
+  .processogram-svg-container svg.is-exploring .is-active-zone g {
+    filter: brightness(1) !important;
+  }
+
+  /* --- Alvo Focado: brilho total + glow de destaque --- */
+  .processogram-svg-container svg .is-target-element {
+    filter: brightness(1) drop-shadow(0 0 8px rgba(255, 255, 255, 0.4)) !important;
+  }
+
+  /* Hover sutil — apenas quando NÃO está em modo exploração */
+  .processogram-svg-container svg:not(.is-exploring) [id]:hover {
     filter: drop-shadow(0 0 4px oklch(0.637 0.237 25.331 / 30%));
   }
 

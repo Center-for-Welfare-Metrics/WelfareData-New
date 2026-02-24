@@ -203,6 +203,8 @@ export default function PublicViewPage() {
               <ProcessogramInteractiveLayer
                 onElementSelect={handleElementSelect}
                 selectedElementId={selectedElementId}
+                activeLevelIndex={activeLevelIndex}
+                breadcrumbPath={breadcrumbPath}
               >
                 <ProcessogramViewer
                   svgContent={state.svgContent}
