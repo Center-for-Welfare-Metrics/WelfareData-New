@@ -10,6 +10,7 @@ import { api } from "@/lib/api";
 import { useAuthStore } from "@/store/authStore";
 import { ProcessogramViewer } from "@/components/processogram/ProcessogramViewer";
 import { ProcessogramInteractiveLayer } from "@/components/processogram/ProcessogramInteractiveLayer";
+import { ProcessogramBreadcrumb } from "@/components/processogram/ProcessogramBreadcrumb";
 import { SidePanel } from "@/components/processogram/SidePanel";
 import { useProcessogramState } from "@/hooks/useProcessogramState";
 import { processogramService } from "@/services/processograms";
@@ -28,35 +29,37 @@ export default function PublicViewPage() {
   const [elements, setElements] = useState<ProcessogramElement[]>([]);
   const [questions, setQuestions] = useState<ProcessogramQuestion[]>([]);
 
-  const navigationState = useProcessogramState(elements, questions);
-
   const {
     selectedElementId,
     activeElementData,
     breadcrumbPath,
-    selectElement,
+    activeLevelIndex,
+    zoomTargetId,
+    handleDrilldown,
     clearSelection,
     navigateUp,
-  } = navigationState;
+  } = useProcessogramState(elements, questions);
 
   const handleElementSelect = useCallback(
     (elementId: string) => {
       if (selectedElementId === elementId) {
         clearSelection();
       } else {
-        selectElement(elementId);
+        handleDrilldown(elementId);
       }
     },
-    [selectedElementId, selectElement, clearSelection]
+    [selectedElementId, handleDrilldown, clearSelection]
   );
 
   useEffect(() => {
     console.log("Current State:", {
       selectedElementId,
+      activeLevelIndex,
+      zoomTargetId,
       breadcrumbPath,
       activeElementData,
     });
-  }, [selectedElementId, breadcrumbPath, activeElementData]);
+  }, [selectedElementId, activeLevelIndex, zoomTargetId, breadcrumbPath, activeElementData]);
 
   useEffect(() => {
     if (!params.id) return;
@@ -190,11 +193,21 @@ export default function PublicViewPage() {
               exit={{ opacity: 0 }}
               className="size-full"
             >
+              <ProcessogramBreadcrumb
+                breadcrumbPath={breadcrumbPath}
+                activeLevelIndex={activeLevelIndex}
+                onNavigate={navigateUp}
+                onReset={clearSelection}
+              />
+
               <ProcessogramInteractiveLayer
                 onElementSelect={handleElementSelect}
                 selectedElementId={selectedElementId}
               >
-                <ProcessogramViewer svgContent={state.svgContent} />
+                <ProcessogramViewer
+                  svgContent={state.svgContent}
+                  zoomTargetId={zoomTargetId}
+                />
               </ProcessogramInteractiveLayer>
 
               <SidePanel

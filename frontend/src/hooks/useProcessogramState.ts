@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import type {
   ProcessogramElement,
   ProcessogramQuestion,
@@ -16,12 +16,12 @@ const LEVEL_MAP: Record<string, ElementLevel> = {
   ci: "circumstance",
 };
 
-function extractLevel(elementId: string): ElementLevel {
+export function extractLevel(elementId: string): ElementLevel {
   const match = elementId.match(ANALYZABLE_PATTERN);
   return match ? LEVEL_MAP[match[1]] ?? "unknown" : "unknown";
 }
 
-function extractCleanName(elementId: string): string {
+export function extractCleanName(elementId: string): string {
   return elementId
     .replace(ANALYZABLE_PATTERN, "")
     .replace(/[-_]+$/, "")
@@ -30,34 +30,67 @@ function extractCleanName(elementId: string): string {
     .trim();
 }
 
-function parseParentsString(parents: string): BreadcrumbItem[] {
-  if (!parents || parents === "none") return [];
+export function hierarchyRank(level: ElementLevel): number {
+  switch (level) {
+    case "production system":
+      return 0;
+    case "life-fate":
+      return 1;
+    case "phase":
+      return 2;
+    case "circumstance":
+      return 3;
+    default:
+      return 99;
+  }
+}
 
-  return parents.split(",").reduce<BreadcrumbItem[]>((acc, segment) => {
-    const trimmed = segment.trim();
-    if (!trimmed) return acc;
+export function isAnalyzableId(id: string): boolean {
+  return ANALYZABLE_PATTERN.test(id);
+}
 
-    const separatorIndex = trimmed.indexOf(" - ");
-    if (separatorIndex === -1) return acc;
+function buildHierarchyFromDom(elementId: string): BreadcrumbItem[] {
+  const svgContainer = document.querySelector(".processogram-svg-container");
+  if (!svgContainer) return [];
 
-    const levelName = trimmed.slice(0, separatorIndex).trim() as ElementLevel;
-    const label = trimmed.slice(separatorIndex + 3).trim();
+  const target =
+    svgContainer.querySelector(`#${CSS.escape(elementId)}`) ??
+    svgContainer.querySelector(`[id="${elementId}"]`);
+  if (!target) return [];
 
-    if (!label) return acc;
+  const crumbs: BreadcrumbItem[] = [];
+  let current = target.parentElement;
+  while (current && current.tagName.toLowerCase() !== "svg") {
+    const parentId = current.getAttribute("id");
+    if (parentId && isAnalyzableId(parentId)) {
+      crumbs.unshift({
+        id: parentId,
+        label: extractCleanName(parentId) || parentId,
+        levelName: extractLevel(parentId),
+      });
+    }
+    current = current.parentElement;
+  }
 
-    acc.push({ id: `parent__${levelName}__${label}`, label, levelName });
-    return acc;
-  }, []);
+  crumbs.push({
+    id: elementId,
+    label: extractCleanName(elementId) || elementId,
+    levelName: extractLevel(elementId),
+  });
+
+  return crumbs;
 }
 
 export interface ProcessogramNavigationState {
   selectedElementId: string | null;
   activeElementData: ActiveElementData | null;
   breadcrumbPath: BreadcrumbItem[];
+  activeLevelIndex: number;
+  zoomTargetId: string | null;
 }
 
 export interface ProcessogramNavigationActions {
-  selectElement: (id: string) => void;
+  handleDrilldown: (clickedId: string) => void;
   clearSelection: () => void;
   navigateUp: (levelIndex: number) => void;
 }
@@ -76,6 +109,10 @@ export function useProcessogramState(
   const [selectedElementId, setSelectedElementId] = useState<string | null>(null);
   const [activeElementData, setActiveElementData] = useState<ActiveElementData | null>(null);
   const [breadcrumbPath, setBreadcrumbPath] = useState<BreadcrumbItem[]>([]);
+  const [activeLevelIndex, setActiveLevelIndex] = useState<number>(-1);
+  const [zoomTargetId, setZoomTargetId] = useState<string | null>(null);
+
+  const pendingTargetRef = useRef<string | null>(null);
 
   const elementsMap = useMemo(() => {
     const map = new Map<string, ProcessogramElement>();
@@ -96,7 +133,7 @@ export function useProcessogramState(
   }, [questions]);
 
   const isAnalyzableElement = useCallback(
-    (id: string) => elementsMap.has(id),
+    (id: string) => elementsMap.has(id) || isAnalyzableId(id),
     [elementsMap]
   );
 
@@ -107,7 +144,6 @@ export function useProcessogramState(
 
       const level = extractLevel(elementId);
       const label = extractCleanName(elementId) || elementId;
-      const parentsBreadcrumb = parseParentsString(element.description ? "" : "");
       const elementQuestions = questionsMap.get(elementId) ?? [];
 
       return {
@@ -115,147 +151,111 @@ export function useProcessogramState(
         level,
         label,
         description: element.description,
-        parents: parentsBreadcrumb,
+        parents: [],
         questions: elementQuestions,
       };
     },
     [elementsMap, questionsMap]
   );
 
-  const buildBreadcrumb = useCallback(
-    (elementId: string, svgRoot?: Element | null): BreadcrumbItem[] => {
-      const crumbs: BreadcrumbItem[] = [];
-      const level = extractLevel(elementId);
-      const label = extractCleanName(elementId) || elementId;
+  const applyLevelState = useCallback(
+    (path: BreadcrumbItem[], levelIdx: number) => {
+      const targetCrumb = path[levelIdx];
+      if (!targetCrumb) return;
 
-      if (svgRoot) {
-        const target =
-          svgRoot.querySelector(`#${CSS.escape(elementId)}`) ??
-          svgRoot.querySelector(`[id="${elementId}"]`);
+      setActiveLevelIndex(levelIdx);
+      setZoomTargetId(targetCrumb.id);
+      setSelectedElementId(targetCrumb.id);
 
-        if (target) {
-          let current = target.parentElement;
-          while (current && current.tagName.toLowerCase() !== "svg") {
-            const parentId = current.getAttribute("id");
-            if (parentId && ANALYZABLE_PATTERN.test(parentId)) {
-              crumbs.unshift({
-                id: parentId,
-                label: extractCleanName(parentId) || parentId,
-                levelName: extractLevel(parentId),
-              });
-            }
-            current = current.parentElement;
-          }
-        }
-      } else {
-        const element = elementsMap.get(elementId);
-        if (element) {
-          const desc = element.description;
-          const allElements = Array.from(elementsMap.values());
-          const potentialParents = allElements.filter(
-            (el) =>
-              el.elementId !== elementId &&
-              hierarchyRank(extractLevel(el.elementId)) <
-                hierarchyRank(level)
-          );
-
-          for (const parent of potentialParents) {
-            const parentLevel = extractLevel(parent.elementId);
-            const parentLabel = extractCleanName(parent.elementId) || parent.elementId;
-
-            if (
-              desc.toLowerCase().includes(parentLabel.toLowerCase()) ||
-              hierarchyRank(parentLevel) < hierarchyRank(level)
-            ) {
-              if (!crumbs.some((c) => c.id === parent.elementId)) {
-                crumbs.push({
-                  id: parent.elementId,
-                  label: parentLabel,
-                  levelName: parentLevel,
-                });
-              }
-            }
-          }
-
-          crumbs.sort(
-            (a, b) => hierarchyRank(a.levelName) - hierarchyRank(b.levelName)
-          );
-        }
+      const data = buildActiveData(targetCrumb.id);
+      if (data) {
+        data.parents = path.slice(0, levelIdx);
       }
-
-      crumbs.push({ id: elementId, label, levelName: level });
-      return crumbs;
+      setActiveElementData(data);
     },
-    [elementsMap]
+    [buildActiveData]
   );
 
-  const selectElement = useCallback(
-    (id: string) => {
-      const svgContainer = document.querySelector(".processogram-svg-container");
-      const breadcrumb = buildBreadcrumb(id, svgContainer);
-      const data = buildActiveData(id);
+  const handleDrilldown = useCallback(
+    (clickedId: string) => {
+      if (!isAnalyzableId(clickedId)) return;
 
-      if (data) {
-        data.parents = breadcrumb.slice(0, -1);
+      const fullPath = buildHierarchyFromDom(clickedId);
+      if (fullPath.length === 0) return;
+
+      if (pendingTargetRef.current === clickedId && breadcrumbPath.length > 0) {
+        const currentIdx = activeLevelIndex;
+        const targetFinalIdx = fullPath.findIndex((c) => c.id === clickedId);
+
+        if (targetFinalIdx === -1) {
+          setBreadcrumbPath(fullPath);
+          applyLevelState(fullPath, fullPath.length - 1);
+          pendingTargetRef.current = null;
+          return;
+        }
+
+        const nextIdx = Math.min(currentIdx + 1, targetFinalIdx);
+
+        if (nextIdx <= currentIdx) {
+          pendingTargetRef.current = null;
+          return;
+        }
+
+        setBreadcrumbPath(fullPath);
+        applyLevelState(fullPath, nextIdx);
+
+        if (nextIdx >= targetFinalIdx) {
+          pendingTargetRef.current = null;
+        }
+        return;
       }
 
-      setSelectedElementId(id);
-      setActiveElementData(data);
-      setBreadcrumbPath(breadcrumb);
+      pendingTargetRef.current = clickedId;
+      setBreadcrumbPath(fullPath);
+
+      const clickedIdx = fullPath.findIndex((c) => c.id === clickedId);
+
+      if (clickedIdx <= 0) {
+        applyLevelState(fullPath, 0);
+        if (clickedIdx === 0) pendingTargetRef.current = null;
+      } else {
+        applyLevelState(fullPath, 0);
+      }
     },
-    [buildBreadcrumb, buildActiveData]
+    [breadcrumbPath, activeLevelIndex, applyLevelState]
   );
 
   const clearSelection = useCallback(() => {
     setSelectedElementId(null);
     setActiveElementData(null);
     setBreadcrumbPath([]);
+    setActiveLevelIndex(-1);
+    setZoomTargetId(null);
+    pendingTargetRef.current = null;
   }, []);
 
   const navigateUp = useCallback(
     (levelIndex: number) => {
       if (levelIndex < 0 || levelIndex >= breadcrumbPath.length) return;
+      if (levelIndex === activeLevelIndex) return;
 
-      const target = breadcrumbPath[levelIndex];
-
-      if (levelIndex === breadcrumbPath.length - 1) return;
-
-      if (target.id.startsWith("parent__")) {
-        setBreadcrumbPath(breadcrumbPath.slice(0, levelIndex + 1));
-        setSelectedElementId(null);
-        setActiveElementData(null);
-        return;
-      }
-
-      selectElement(target.id);
+      applyLevelState(breadcrumbPath, levelIndex);
+      pendingTargetRef.current = null;
     },
-    [breadcrumbPath, selectElement]
+    [breadcrumbPath, activeLevelIndex, applyLevelState]
   );
 
   return {
     selectedElementId,
     activeElementData,
     breadcrumbPath,
-    selectElement,
+    activeLevelIndex,
+    zoomTargetId,
+    handleDrilldown,
     clearSelection,
     navigateUp,
     elementsMap,
     questionsMap,
     isAnalyzableElement,
   };
-}
-
-function hierarchyRank(level: ElementLevel): number {
-  switch (level) {
-    case "production system":
-      return 0;
-    case "life-fate":
-      return 1;
-    case "phase":
-      return 2;
-    case "circumstance":
-      return 3;
-    default:
-      return 99;
-  }
 }

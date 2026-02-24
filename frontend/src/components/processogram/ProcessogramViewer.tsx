@@ -1,9 +1,10 @@
 "use client";
 
-import { useRef } from "react";
+import { useRef, useEffect } from "react";
 import {
   TransformWrapper,
   TransformComponent,
+  useControls,
   type ReactZoomPanPinchRef,
 } from "react-zoom-pan-pinch";
 import { motion } from "framer-motion";
@@ -36,15 +37,79 @@ function HudButton({ onClick, label, children, className }: HudButtonProps) {
   );
 }
 
-interface ProcessogramViewerProps {
-  svgContent: string;
+const ZOOM_ANIMATION_MS = 800;
+const ZOOM_PADDING = 0.85;
+
+function computeDynamicScale(
+  elementId: string,
+  wrapperEl: HTMLElement | null
+): number {
+  if (!wrapperEl) return 2;
+
+  const svgContainer = wrapperEl.querySelector(".processogram-svg-container");
+  if (!svgContainer) return 2;
+
+  const target =
+    svgContainer.querySelector(`#${CSS.escape(elementId)}`) ??
+    svgContainer.querySelector(`[id="${elementId}"]`);
+  if (!target) return 2;
+
+  const bbox = (target as SVGGraphicsElement).getBBox?.();
+  if (!bbox || bbox.width === 0 || bbox.height === 0) return 2;
+
+  const wrapperRect = wrapperEl.getBoundingClientRect();
+  const scaleX = (wrapperRect.width * ZOOM_PADDING) / bbox.width;
+  const scaleY = (wrapperRect.height * ZOOM_PADDING) / bbox.height;
+  const idealScale = Math.min(scaleX, scaleY);
+
+  return Math.max(0.5, Math.min(idealScale, 6));
 }
 
-export function ProcessogramViewer({ svgContent }: ProcessogramViewerProps) {
+interface CameraControllerProps {
+  zoomTargetId: string | null;
+  wrapperRef: React.RefObject<HTMLDivElement | null>;
+}
+
+function CameraController({ zoomTargetId, wrapperRef }: CameraControllerProps) {
+  const { zoomToElement, resetTransform } = useControls();
+  const prevTargetRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!zoomTargetId) {
+      if (prevTargetRef.current !== null) {
+        resetTransform(ZOOM_ANIMATION_MS, "easeInOutCubic");
+        prevTargetRef.current = null;
+      }
+      return;
+    }
+
+    if (zoomTargetId === prevTargetRef.current) return;
+    prevTargetRef.current = zoomTargetId;
+
+    const scale = computeDynamicScale(zoomTargetId, wrapperRef.current);
+
+    requestAnimationFrame(() => {
+      zoomToElement(zoomTargetId, scale, ZOOM_ANIMATION_MS, "easeInOutCubic");
+    });
+  }, [zoomTargetId, zoomToElement, resetTransform, wrapperRef]);
+
+  return null;
+}
+
+interface ProcessogramViewerProps {
+  svgContent: string;
+  zoomTargetId?: string | null;
+}
+
+export function ProcessogramViewer({
+  svgContent,
+  zoomTargetId = null,
+}: ProcessogramViewerProps) {
   const transformRef = useRef<ReactZoomPanPinchRef>(null);
+  const wrapperRef = useRef<HTMLDivElement>(null);
 
   return (
-    <div className="relative size-full overflow-hidden bg-background">
+    <div ref={wrapperRef} className="relative size-full overflow-hidden bg-background">
       <TransformWrapper
         ref={transformRef}
         initialScale={1}
@@ -55,6 +120,10 @@ export function ProcessogramViewer({ svgContent }: ProcessogramViewerProps) {
         panning={{ velocityDisabled: false }}
         doubleClick={{ mode: "zoomIn", step: 0.7 }}
       >
+        <CameraController
+          zoomTargetId={zoomTargetId}
+          wrapperRef={wrapperRef}
+        />
         <TransformComponent
           wrapperClass="!size-full cursor-grab active:cursor-grabbing"
           contentClass="!flex !items-center !justify-center"
