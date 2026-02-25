@@ -46,3 +46,6 @@ export {
   isMaxLevel,
   deslugify,
 } from "./extractInfoFromId";
+
+// Motor de Câmera (ViewBox math)
+export { getElementViewBox } from "./getElementViewBox";
