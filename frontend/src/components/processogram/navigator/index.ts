@@ -63,3 +63,6 @@ export type {
   UseClickHandlerProps,
   UseClickHandlerReturn,
 } from "./hooks/useClickHandler";
+
+export { useHoverEffects } from "./hooks/useHoverEffects";
+export type { UseHoverEffectsProps } from "./hooks/useHoverEffects";

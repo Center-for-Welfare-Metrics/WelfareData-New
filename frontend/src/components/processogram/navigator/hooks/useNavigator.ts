@@ -14,20 +14,23 @@
  *   4. Animar o viewBox com GSAP (`gsap.fromTo`)
  *   5. Notificar mudanças via callback `onChange`
  *
- * ⚠ Este hook NÃO é responsável pelo isolamento visual (filter/brightness).
- *   Isso será adicionado na Etapa 4.
- *
  * Referência: GUIA_REPLICACAO_SVG_NAVIGATOR.md §10
  * ═══════════════════════════════════════════════════════════════════════
  */
 
 "use client";
 
-import { type RefObject, useCallback } from "react";
+import { type RefObject, useCallback, useRef } from "react";
 import { gsap } from "gsap";
 import { getElementViewBox } from "../getElementViewBox";
 import { getLevelNumberById } from "../extractInfoFromId";
-import { ANIMATION_DURATION, ANIMATION_EASE } from "../consts";
+import {
+  ANIMATION_DURATION,
+  ANIMATION_EASE,
+  UNFOCUSED_FILTER,
+  INVERSE_DICT,
+  MAX_LEVEL,
+} from "../consts";
 import type { HierarchyItem, HistoryLevel } from "../types";
 
 // ─── Props do Hook ─────────────────────────────────────────────────────
@@ -97,11 +100,18 @@ export function useNavigator({
   lockInteractionRef,
   currentLevelRef,
   currentElementIdRef,
-  currentTheme: _currentTheme,
+  currentTheme,
   onChange,
   getElementIdentifierWithHierarchy,
   setFullBrightnessToCurrentLevel,
 }: UseNavigatorProps): UseNavigatorReturn {
+  /**
+   * Ref para a animação de escurecimento dos irmãos fora de foco.
+   * Guardamos para poder dar `.revert()` antes de uma nova transição,
+   * evitando sobreposição de filtros.
+   */
+  const outOfFocusAnimationRef = useRef<gsap.core.Tween | null>(null);
+
   const changeLevelTo = useCallback(
     (target: SVGElement, toPrevious: boolean, callback?: () => void) => {
       if (!svgElement) return;
@@ -128,12 +138,39 @@ export function useNavigator({
       // ═══════════════════════════════════════════════
       // 3. ISOLAMENTO VISUAL (ESCURECER FORA DE FOCO)
       // ═══════════════════════════════════════════════
-      // TODO: Etapa 4 - Isolamento Visual
-      // Aqui entrará a lógica de:
-      //   - Selecionar irmãos fora de foco via querySelectorAll
-      //   - gsap.to(outOfFocusElements, { filter: UNFOCUSED_FILTER[_currentTheme] })
-      //   - Reverter animação anterior (outOfFocusAnimation.current.revert())
-      void _currentTheme; // Usado na Etapa 4
+      // Seleciona todos os irmãos do elemento alvo que
+      // devem ficar "apagados" (fora de foco).
+      //
+      // No MAX_LEVEL (folha): escurece irmãos do MESMO nível.
+      // Nos outros níveis:   escurece tudo que NÃO é filho
+      //                      do elemento alvo.
+      let outOfFocusSelector: string;
+
+      if (level === MAX_LEVEL) {
+        // Nível máximo (ci): escurece os irmãos do mesmo nível
+        const levelKey = INVERSE_DICT[level];
+        outOfFocusSelector = `[id*="${levelKey}"]:not([id="${id}"])`;
+      } else {
+        // Outros níveis: escurece tudo com "--" que NÃO é
+        // descendente do elemento alvo
+        outOfFocusSelector = `[id*="--"]:not([id^="${id}"] *):not([id="${id}"])`;
+      }
+
+      const outOfFocusElements =
+        svgElement.querySelectorAll(outOfFocusSelector);
+
+      // Reverte a animação anterior para não sobrepor filtros
+      if (outOfFocusAnimationRef.current) {
+        outOfFocusAnimationRef.current.revert();
+      }
+
+      if (outOfFocusElements.length > 0) {
+        outOfFocusAnimationRef.current = gsap.to(outOfFocusElements, {
+          filter: UNFOCUSED_FILTER[currentTheme],
+          duration: ANIMATION_DURATION,
+          ease: ANIMATION_EASE,
+        });
+      }
 
       // ═══════════════════════════════════════════════
       // 4. NOTIFICAR MUDANÇA (breadcrumb, etc.)
@@ -174,7 +211,7 @@ export function useNavigator({
         },
       );
     },
-    [svgElement, historyLevelRef, lockInteractionRef, currentLevelRef, currentElementIdRef, _currentTheme, onChange, getElementIdentifierWithHierarchy, setFullBrightnessToCurrentLevel],
+    [svgElement, historyLevelRef, lockInteractionRef, currentLevelRef, currentElementIdRef, currentTheme, onChange, getElementIdentifierWithHierarchy, setFullBrightnessToCurrentLevel],
   );
 
   return { changeLevelTo };
