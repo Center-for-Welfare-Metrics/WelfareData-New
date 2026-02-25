@@ -118,9 +118,9 @@ O parser **nunca** faz `document.querySelector` — é uma função pura que ope
 | Etapa | Descrição | Status |
 |-------|-----------|--------|
 | **1** | Constantes, tipos, parser de IDs, shell do ProcessogramViewer | ✅ Concluída |
-| **2** | `getElementViewBox` (cálculo da câmera via BBox) + `useNavigator` (changeLevelTo) | 🔲 |
-| **3** | `useClickHandler` (interceptação de cliques, drill-down/up) + `hierarchy.ts` (breadcrumb) | 🔲 |
-| **4** | `useHoverEffects` (focus/mute visual via GSAP filter) | 🔲 |
+| **2** | `getElementViewBox` (cálculo da câmera via BBox) | ✅ Concluída |
+| **3** | `hierarchy.ts` + `useNavigator` (changeLevelTo) + `useClickHandler` | ✅ Concluída |
+| **4** | `useHoverEffects` (focus/mute visual via GSAP filter) + blackout no `useNavigator` | ✅ Concluída |
 | **5** | `useEventBus` (navegação programática — breadcrumb, botão voltar) | 🔲 |
 
 ---

@@ -89,7 +89,7 @@ export function ProcessogramViewer({
  * Garante que o <svg> injetado está pronto para o sistema de câmera:
  *
  * 1. Se não tem `viewBox`, cria um a partir de `width`/`height`
- * 2. Remove atributos `width`/`height` fixos (o CSS controla o tamanho)
+ * 2. Substitui atributos `width`/`height` fixos por `"100%"` (dimensões relativas)
  * 3. Define `preserveAspectRatio="xMidYMid meet"` para enquadramento
  * 4. Define `overflow="visible"` para não cortar durante animações
  */
@@ -109,9 +109,11 @@ function sanitizeSvgElement(svgEl: SVGSVGElement): void {
     }
   }
 
-  // Remove dimensões fixas — CSS 100% via className controla
-  svgEl.removeAttribute("width");
-  svgEl.removeAttribute("height");
+  // Substitui dimensões fixas por relativas — o SVG ocupa 100% do container pai.
+  // Usar setAttribute (não CSS) garante que o SVG tem dimensões intrínsecas
+  // relativas mesmo se a cadeia de height:100% CSS falhar.
+  svgEl.setAttribute("width", "100%");
+  svgEl.setAttribute("height", "100%");
 
   // Enquadramento proporcional centralizado
   svgEl.setAttribute("preserveAspectRatio", "xMidYMid meet");

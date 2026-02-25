@@ -149,7 +149,7 @@ export default function PublicViewPage() {
         </div>
       </header>
 
-      <div className="relative flex-1">
+      <div className="relative flex-1 overflow-hidden">
         <AnimatePresence mode="wait">
           {state.status === "loading" && (
             <motion.div

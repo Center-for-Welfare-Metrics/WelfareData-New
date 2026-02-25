@@ -67,32 +67,34 @@ O endpoint retorna metadados do processograma (nome, URLs dos SVGs, status) — 
 
 ## 3. Stack do Visualizador
 
-### `react-zoom-pan-pinch`
+### `react-inlinesvg` + GSAP viewBox (v2)
 
-Biblioteca escolhida para interação tipo "Google Maps":
+> ⚠️ **Nota:** A arquitetura foi migrada de `dangerouslySetInnerHTML` + `react-zoom-pan-pinch`
+> para `react-inlinesvg` + GSAP viewBox nativo. Ver `svg_navigation_architecture.md` para detalhes.
 
 | Feature             | Implementação                                    |
 |---------------------|--------------------------------------------------|
-| Zoom (scroll)       | `minScale: 0.2` → `maxScale: 8`                 |
-| Pan (arrastar)      | `limitToBounds: false` — navegação livre          |
-| Double-click zoom   | `mode: "zoomIn"`, `step: 0.7`                    |
-| Center on init      | `centerOnInit: true`                              |
-| Controles programáticos | `ref.current.zoomIn()`, `zoomOut()`, `centerView()` |
+| Injeção SVG         | `react-inlinesvg` com `innerRef` → DOM real      |
+| Zoom/Câmera         | GSAP anima atributo `viewBox` nativo (zero desfoque) |
+| Pan                 | Deslocamento via viewBox (não CSS transform)     |
+| Drill-down          | `useNavigator` → `changeLevelTo` com animação    |
+| Isolamento visual   | GSAP `filter: brightness()` + CSS classes        |
 
 ### Renderização SVG
 
-O SVG é carregado como texto (fetch da URL no GCS) e renderizado via `dangerouslySetInnerHTML`:
+O SVG é carregado e injetado como DOM real via `react-inlinesvg`:
 
 ```tsx
-<div dangerouslySetInnerHTML={{ __html: svgContent }} />
+<SVG src={svgUrl} innerRef={handleSvgRef} className="size-full" />
 ```
 
-**Por que não `<img src={url}>`?**
-- `dangerouslySetInnerHTML` preserva interatividade do SVG (hover states, IDs, classes)
-- Permite futura integração com tooltips nos elementos do processograma
-- O SVG já foi sanitizado pelo pipeline SVGO no upload (backend)
+Após injeção, `sanitizeSvgElement()` prepara o SVG para o sistema de câmera:
+1. Cria `viewBox` a partir de `width`/`height` se necessário
+2. Substitui `width`/`height` fixos por `"100%"` (dimensões relativas ao container)
+3. Define `preserveAspectRatio="xMidYMid meet"` para enquadramento centralizado
+4. Define `overflow="visible"` para transições de viewBox
 
-**Segurança:** O SVG passa por SVGO 4 no backend durante o upload — scripts maliciosos são removidos. O conteúdo exibido é o SVG processado armazenado no GCS.
+**Segurança:** O SVG passa por SVGO 4 no backend durante o upload — scripts maliciosos são removidos.
 
 ### Tema Responsivo
 
@@ -108,7 +110,7 @@ O visualizador detecta o tema atual via `useTheme()` e seleciona:
 ```
 /view/[id]/page.tsx (Client Component)
 │
-├─ Header Minimalista
+├─ Header Minimalista (h-12, shrink-0)
 │   ├─ Logo WelfareData (link para /)
 │   ├─ Nome do processograma (quando carregado)
 │   └─ Botão "Login" (se não autenticado)
@@ -116,31 +118,43 @@ O visualizador detecta o tema atual via `useTheme()` e seleciona:
 ├─ Estado de Loading (Loader + texto)
 ├─ Estado de Erro (ícone + mensagem + link voltar)
 │
-└─ ProcessogramViewer (quando ready)
-    ├─ TransformWrapper (zoom/pan engine)
-    │   └─ TransformComponent
-    │       └─ SVG via dangerouslySetInnerHTML
-    │
-    ├─ HUD Controls (absoluto, direita)
-    │   ├─ Zoom In
-    │   ├─ Zoom Out
-    │   ├─ Reset (escala 1)
-    │   └─ Fit to Screen
-    │
-    └─ Hint Bar (absoluto, inferior)
-        └─ "Scroll para zoom · Arraste para navegar"
+└─ Container Principal (div.relative.flex-1.overflow-hidden)
+    └─ ProcessogramInteractiveLayer (div.size-full)
+        └─ ProcessogramViewer (motion.div.size-full)
+            └─ <svg width="100%" height="100%" viewBox="..." preserveAspectRatio="xMidYMid meet">
+                 ← Injetado por react-inlinesvg, sanitizado por sanitizeSvgElement()
+    ├─ ProcessogramBreadcrumb (absolute, z-50, top-left)
+    └─ SidePanel (absolute, z-30, right)
 ```
+
+### Cadeia de Layout
+
+```
+div.flex.h-screen.flex-col.overflow-hidden     ← viewport inteiro
+  header.h-12.shrink-0                         ← cabeçalho fixo 48px
+  div.relative.flex-1.overflow-hidden           ← restante (BFC para height:100%)
+    motion.div.size-full                        ← AnimatePresence wrapper
+      div.size-full (InteractiveLayer)          ← intercepta cliques
+        motion.div.size-full (ProcessogramViewer) ← container do SVG
+          <svg width="100%" height="100%">      ← dimensões relativas ao pai
+```
+
+> **Nota:** O `overflow-hidden` no `flex-1` é essencial para criar um Block Formatting Context
+> que permite a propagação correta de `height: 100%` para toda a cadeia de filhos.
+> O SVG usa atributos nativos `width="100%"` e `height="100%"` (não apenas CSS) como rede de
+> segurança para dimensionamento, combinado com `preserveAspectRatio="xMidYMid meet"` para
+> centralização do conteúdo.
 
 ### Design Decisions
 
 | Decisão                           | Razão                                                      |
 |-----------------------------------|-------------------------------------------------------------|
 | Fullscreen (`h-screen`)           | Maximiza área de visualização — imersivo                    |
-| Sem Sidebar                       | Página pública não precisa de navegação do dashboard         |
-| Header transparente               | Não obstrui o conteúdo, integra com a estética               |
-| HUD Controls com `bg-black/50`    | Visíveis sobre qualquer fundo de SVG                        |
+| `overflow-hidden` no `flex-1`     | Cria BFC, resolve herança de `height: 100%`, contém SVG    |
+| SVG `width/height="100%"`         | Dimensões relativas por atributo nativo (rede de segurança)|
+| `preserveAspectRatio` meet        | Centraliza conteúdo SVG sem distorção                      |
+| Header transparente               | Não obstrui o conteúdo, integra com a estética              |
 | `AnimatePresence` para estados    | Transições suaves entre loading → ready/error               |
-| `cursor-grab` / `cursor-grabbing` | Feedback visual de que o canvas é arrastável                |
 
 ---
 
