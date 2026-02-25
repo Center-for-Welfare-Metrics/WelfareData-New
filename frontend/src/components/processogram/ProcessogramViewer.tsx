@@ -1,15 +1,36 @@
 "use client";
 
-import { useRef, useEffect } from "react";
-import {
-  TransformWrapper,
-  TransformComponent,
-  useControls,
-  type ReactZoomPanPinchRef,
-} from "react-zoom-pan-pinch";
+import { useRef, useEffect, useCallback } from "react";
+import gsap from "gsap";
 import { motion } from "framer-motion";
 import { ZoomIn, ZoomOut, Maximize, RotateCcw } from "lucide-react";
 import { cn } from "@/lib/utils";
+
+/* =====================================================================
+ * GSAP ViewBox Camera Engine
+ *
+ * Substitui react-zoom-pan-pinch por animação nativa de `viewBox`.
+ * O SVG recalcula vetores nativamente a cada frame — zero desfoque,
+ * enquadramento perfeito, centralização matemática exata.
+ *
+ * Fluxo:
+ *   zoomTargetId muda → extractRealId → getBBox → padding adaptativo
+ *   → gsap.to(svg, { attr: { viewBox } }) → animação fluida
+ * ===================================================================== */
+
+// ─── Constantes ────────────────────────────────────────────────────────
+const ANIM_DURATION = 0.8;
+const PADDING_FACTOR = 0.20; // 20% de padding ao redor do alvo
+const MIN_VIEWBOX_DIM = 120; // Dimensão mínima do viewBox (evita zoom excessivo em elementos minúsculos)
+const ZOOM_STEP = 0.25; // Fração de zoom por clique no HUD (25%)
+
+// ─── Tipos ─────────────────────────────────────────────────────────────
+interface ViewBox {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
 
 interface HudButtonProps {
   onClick: () => void;
@@ -17,6 +38,83 @@ interface HudButtonProps {
   children: React.ReactNode;
   className?: string;
 }
+
+// ─── Utilitários ───────────────────────────────────────────────────────
+
+function parseViewBox(raw: string | null): ViewBox | null {
+  if (!raw) return null;
+  const parts = raw.trim().split(/[\s,]+/).map(Number);
+  if (parts.length !== 4 || parts.some(Number.isNaN)) return null;
+  return { x: parts[0], y: parts[1], w: parts[2], h: parts[3] };
+}
+
+function viewBoxToString(vb: ViewBox): string {
+  return `${vb.x} ${vb.y} ${vb.w} ${vb.h}`;
+}
+
+/**
+ * Extrai o ID real do elemento a partir do token de zoom.
+ * Formato: "zoom__<realId>__<levelIdx>__<timestamp>"
+ * Fallback: devolve o próprio valor se não seguir o formato.
+ */
+function extractRealId(zoomToken: string): string {
+  if (!zoomToken.startsWith("zoom__")) return zoomToken;
+  const parts = zoomToken.split("__");
+  return parts[1] ?? zoomToken;
+}
+
+/**
+ * Calcula o viewBox alvo com padding adaptativo ao redor de um elemento SVG.
+ *
+ * Padding = max(PADDING_FACTOR × dimensão, MIN_VIEWBOX_DIM / 4).
+ * Isso garante que elementos muito pequenos (ex: um leitão) não sejam
+ * enquadrados tão de perto que percam contexto visual.
+ */
+function computeTargetViewBox(element: SVGGraphicsElement): ViewBox {
+  const bbox = element.getBBox();
+
+  // Padding adaptativo: 20% da dimensão, com mínimo absoluto
+  const rawPadX = bbox.width * PADDING_FACTOR;
+  const rawPadY = bbox.height * PADDING_FACTOR;
+  const minPad = MIN_VIEWBOX_DIM / 4;
+  const padX = Math.max(rawPadX, minPad);
+  const padY = Math.max(rawPadY, minPad);
+
+  let w = bbox.width + padX * 2;
+  let h = bbox.height + padY * 2;
+
+  // Garante dimensão mínima para elementos microscópicos
+  if (w < MIN_VIEWBOX_DIM) {
+    const diff = MIN_VIEWBOX_DIM - w;
+    w = MIN_VIEWBOX_DIM;
+    // Re-centraliza
+    return {
+      x: bbox.x - padX - diff / 2,
+      y: bbox.y - padY - (MIN_VIEWBOX_DIM - h) / 2,
+      w,
+      h: Math.max(h, MIN_VIEWBOX_DIM),
+    };
+  }
+  if (h < MIN_VIEWBOX_DIM) {
+    const diff = MIN_VIEWBOX_DIM - h;
+    h = MIN_VIEWBOX_DIM;
+    return {
+      x: bbox.x - padX - (MIN_VIEWBOX_DIM - w) / 2,
+      y: bbox.y - padY - diff / 2,
+      w: Math.max(w, MIN_VIEWBOX_DIM),
+      h,
+    };
+  }
+
+  return {
+    x: bbox.x - padX,
+    y: bbox.y - padY,
+    w,
+    h,
+  };
+}
+
+// ─── HUD Button ────────────────────────────────────────────────────────
 
 function HudButton({ onClick, label, children, className }: HudButtonProps) {
   return (
@@ -37,79 +135,253 @@ function HudButton({ onClick, label, children, className }: HudButtonProps) {
   );
 }
 
-const ZOOM_ANIMATION_MS = 800;
-const ZOOM_PADDING = 0.85;
+// ─── Hook: useViewBoxCamera ────────────────────────────────────────────
 
-function computeDynamicScale(
-  elementId: string,
-  wrapperEl: HTMLElement | null
-): number {
-  if (!wrapperEl) return 2;
-
-  const svgContainer = wrapperEl.querySelector(".processogram-svg-container");
-  if (!svgContainer) return 2;
-
-  const target =
-    svgContainer.querySelector(`#${CSS.escape(elementId)}`) ??
-    svgContainer.querySelector(`[id="${elementId}"]`);
-  if (!target) return 2;
-
-  const bbox = (target as SVGGraphicsElement).getBBox?.();
-  if (!bbox || bbox.width === 0 || bbox.height === 0) return 2;
-
-  const wrapperRect = wrapperEl.getBoundingClientRect();
-  const scaleX = (wrapperRect.width * ZOOM_PADDING) / bbox.width;
-  const scaleY = (wrapperRect.height * ZOOM_PADDING) / bbox.height;
-  const idealScale = Math.min(scaleX, scaleY);
-
-  return Math.max(0.5, Math.min(idealScale, 6));
+interface UseViewBoxCameraOptions {
+  svgRef: React.RefObject<SVGSVGElement | null>;
 }
 
-interface CameraControllerProps {
-  zoomTargetId: string | null;
-  wrapperRef: React.RefObject<HTMLDivElement | null>;
-}
+function useViewBoxCamera({ svgRef }: UseViewBoxCameraOptions) {
+  const originalViewBoxRef = useRef<ViewBox | null>(null);
+  const currentViewBoxRef = useRef<ViewBox | null>(null);
+  const tweenRef = useRef<gsap.core.Tween | null>(null);
 
-/**
- * Extrai o ID real do elemento a partir do token de zoom.
- * Formato: "zoom__<realId>__<levelIdx>__<timestamp>"
- * Fallback: devolve o próprio valor se não seguir o formato.
- */
-function extractRealId(zoomToken: string): string {
-  if (!zoomToken.startsWith("zoom__")) return zoomToken;
-  const parts = zoomToken.split("__");
-  // parts = ["zoom", realId, levelIdx, timestamp]
-  return parts[1] ?? zoomToken;
-}
+  // Captura o viewBox original do SVG após a primeira renderização
+  const captureOriginalViewBox = useCallback(() => {
+    const svg = svgRef.current;
+    if (!svg || originalViewBoxRef.current) return;
 
-function CameraController({ zoomTargetId, wrapperRef }: CameraControllerProps) {
-  const { zoomToElement, centerView } = useControls();
-  const prevTargetRef = useRef<string | null>(null);
+    const raw = svg.getAttribute("viewBox");
+    const parsed = parseViewBox(raw);
 
-  useEffect(() => {
-    // --- Reset: volta à visão geral sem catapultar ---
-    if (!zoomTargetId) {
-      if (prevTargetRef.current !== null) {
-        centerView(1, ZOOM_ANIMATION_MS, "easeInOutCubic");
-        prevTargetRef.current = null;
-      }
+    if (parsed) {
+      originalViewBoxRef.current = parsed;
+      currentViewBoxRef.current = { ...parsed };
       return;
     }
 
-    // --- Mesma transição: ignora ---
-    if (zoomTargetId === prevTargetRef.current) return;
-    prevTargetRef.current = zoomTargetId;
+    // Fallback: calcula do bounding box inteiro do SVG
+    const bbox = svg.getBBox();
+    if (bbox.width > 0 && bbox.height > 0) {
+      const vb: ViewBox = { x: bbox.x, y: bbox.y, w: bbox.width, h: bbox.height };
+      originalViewBoxRef.current = vb;
+      currentViewBoxRef.current = { ...vb };
+      svg.setAttribute("viewBox", viewBoxToString(vb));
+    }
+  }, [svgRef]);
 
-    const realId = extractRealId(zoomTargetId);
-    const scale = computeDynamicScale(realId, wrapperRef.current);
+  // Anima para um viewBox específico
+  const animateTo = useCallback(
+    (target: ViewBox, duration = ANIM_DURATION) => {
+      const svg = svgRef.current;
+      if (!svg || !currentViewBoxRef.current) return;
 
-    requestAnimationFrame(() => {
-      zoomToElement(realId, scale, ZOOM_ANIMATION_MS, "easeInOutCubic");
+      // Mata animação anterior (evita sobreposição)
+      tweenRef.current?.kill();
+
+      const proxy = { ...currentViewBoxRef.current };
+
+      tweenRef.current = gsap.to(proxy, {
+        x: target.x,
+        y: target.y,
+        w: target.w,
+        h: target.h,
+        duration,
+        ease: "power3.inOut",
+        onUpdate: () => {
+          svg.setAttribute("viewBox", viewBoxToString(proxy));
+          currentViewBoxRef.current = { ...proxy };
+        },
+        onComplete: () => {
+          currentViewBoxRef.current = { ...target };
+        },
+      });
+    },
+    [svgRef]
+  );
+
+  // Zoom para um elemento alvo (ou reset se null)
+  const zoomToTarget = useCallback(
+    (targetId: string | null) => {
+      const svg = svgRef.current;
+      if (!svg) return;
+
+      captureOriginalViewBox();
+
+      // Reset → volta ao viewBox original
+      if (!targetId) {
+        if (originalViewBoxRef.current) {
+          animateTo(originalViewBoxRef.current);
+        }
+        return;
+      }
+
+      const realId = extractRealId(targetId);
+      const element =
+        svg.querySelector(`#${CSS.escape(realId)}`) ??
+        svg.querySelector(`[id="${realId}"]`);
+
+      if (!element) return;
+
+      const targetVb = computeTargetViewBox(
+        element as SVGGraphicsElement
+      );
+      animateTo(targetVb);
+    },
+    [svgRef, captureOriginalViewBox, animateTo]
+  );
+
+  // HUD: Zoom In (reduz viewBox → aproxima)
+  const zoomIn = useCallback(() => {
+    if (!currentViewBoxRef.current) return;
+    const vb = currentViewBoxRef.current;
+    const shrinkW = vb.w * ZOOM_STEP;
+    const shrinkH = vb.h * ZOOM_STEP;
+    animateTo({
+      x: vb.x + shrinkW / 2,
+      y: vb.y + shrinkH / 2,
+      w: vb.w - shrinkW,
+      h: vb.h - shrinkH,
+    }, 0.4);
+  }, [animateTo]);
+
+  // HUD: Zoom Out (expande viewBox → afasta)
+  const zoomOut = useCallback(() => {
+    if (!currentViewBoxRef.current) return;
+    const vb = currentViewBoxRef.current;
+    const growW = vb.w * ZOOM_STEP;
+    const growH = vb.h * ZOOM_STEP;
+    animateTo({
+      x: vb.x - growW / 2,
+      y: vb.y - growH / 2,
+      w: vb.w + growW,
+      h: vb.h + growH,
+    }, 0.4);
+  }, [animateTo]);
+
+  // HUD: Reset (volta ao viewBox original com scale 1:1)
+  const resetView = useCallback(() => {
+    if (originalViewBoxRef.current) {
+      animateTo(originalViewBoxRef.current);
+    }
+  }, [animateTo]);
+
+  // HUD: Fit to screen (ajusta o viewBox para caber o conteúdo inteiro)
+  const fitToScreen = useCallback(() => {
+    const svg = svgRef.current;
+    if (!svg) return;
+    const bbox = svg.getBBox();
+    if (bbox.width <= 0 || bbox.height <= 0) return;
+    const pad = Math.max(bbox.width, bbox.height) * 0.05;
+    animateTo({
+      x: bbox.x - pad,
+      y: bbox.y - pad,
+      w: bbox.width + pad * 2,
+      h: bbox.height + pad * 2,
     });
-  }, [zoomTargetId, zoomToElement, centerView, wrapperRef]);
+  }, [svgRef, animateTo]);
 
-  return null;
+  // Cleanup: mata tweens pendentes ao desmontar
+  useEffect(() => {
+    return () => {
+      tweenRef.current?.kill();
+    };
+  }, []);
+
+  return { captureOriginalViewBox, zoomToTarget, zoomIn, zoomOut, resetView, fitToScreen, currentViewBoxRef };
 }
+
+// ─── Hook: useSvgPanZoom (pan + scroll zoom nativos) ───────────────────
+
+function useSvgPanZoom(
+  svgRef: React.RefObject<SVGSVGElement | null>,
+  containerRef: React.RefObject<HTMLDivElement | null>,
+  currentViewBoxRef: React.MutableRefObject<ViewBox | null>
+) {
+  const isPanningRef = useRef(false);
+  const panStartRef = useRef({ x: 0, y: 0 });
+
+  useEffect(() => {
+    const container = containerRef.current;
+    const svg = svgRef.current;
+    if (!container || !svg) return;
+
+    // ── Scroll Zoom ──
+    function handleWheel(e: WheelEvent) {
+      e.preventDefault();
+      const vb = currentViewBoxRef.current;
+      if (!vb) return;
+
+      const rect = svg!.getBoundingClientRect();
+      // Posição normalizada do cursor dentro do SVG (0..1)
+      const normX = (e.clientX - rect.left) / rect.width;
+      const normY = (e.clientY - rect.top) / rect.height;
+
+      const factor = e.deltaY > 0 ? 1.1 : 0.9;
+      const newW = vb.w * factor;
+      const newH = vb.h * factor;
+
+      // Zoom centrado no cursor
+      const newX = vb.x + (vb.w - newW) * normX;
+      const newY = vb.y + (vb.h - newH) * normY;
+
+      const newVb: ViewBox = { x: newX, y: newY, w: newW, h: newH };
+      svg!.setAttribute("viewBox", viewBoxToString(newVb));
+      currentViewBoxRef.current = newVb;
+    }
+
+    // ── Pan (drag) ──
+    function handlePointerDown(e: PointerEvent) {
+      // Ignora se for clique em botão do HUD
+      if ((e.target as Element).closest("[data-hud]")) return;
+      isPanningRef.current = true;
+      panStartRef.current = { x: e.clientX, y: e.clientY };
+      container!.style.cursor = "grabbing";
+      container!.setPointerCapture(e.pointerId);
+    }
+
+    function handlePointerMove(e: PointerEvent) {
+      if (!isPanningRef.current) return;
+      const vb = currentViewBoxRef.current;
+      if (!vb) return;
+
+      const rect = svg!.getBoundingClientRect();
+      // Converte pixels de tela → unidades SVG
+      const scaleX = vb.w / rect.width;
+      const scaleY = vb.h / rect.height;
+
+      const dx = (panStartRef.current.x - e.clientX) * scaleX;
+      const dy = (panStartRef.current.y - e.clientY) * scaleY;
+
+      const newVb: ViewBox = { x: vb.x + dx, y: vb.y + dy, w: vb.w, h: vb.h };
+      svg!.setAttribute("viewBox", viewBoxToString(newVb));
+      currentViewBoxRef.current = newVb;
+
+      panStartRef.current = { x: e.clientX, y: e.clientY };
+    }
+
+    function handlePointerUp() {
+      isPanningRef.current = false;
+      container!.style.cursor = "";
+    }
+
+    container.addEventListener("wheel", handleWheel, { passive: false });
+    container.addEventListener("pointerdown", handlePointerDown);
+    container.addEventListener("pointermove", handlePointerMove);
+    container.addEventListener("pointerup", handlePointerUp);
+    container.addEventListener("pointerleave", handlePointerUp);
+
+    return () => {
+      container.removeEventListener("wheel", handleWheel);
+      container.removeEventListener("pointerdown", handlePointerDown);
+      container.removeEventListener("pointermove", handlePointerMove);
+      container.removeEventListener("pointerup", handlePointerUp);
+      container.removeEventListener("pointerleave", handlePointerUp);
+    };
+  }, [svgRef, containerRef, currentViewBoxRef]);
+}
+
+// ─── Componente Principal ──────────────────────────────────────────────
 
 interface ProcessogramViewerProps {
   svgContent: string;
@@ -120,73 +392,103 @@ export function ProcessogramViewer({
   svgContent,
   zoomTargetId = null,
 }: ProcessogramViewerProps) {
-  const transformRef = useRef<ReactZoomPanPinchRef>(null);
-  const wrapperRef = useRef<HTMLDivElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const svgRef = useRef<SVGSVGElement>(null);
+  const prevTargetRef = useRef<string | null>(null);
+  const svgReadyRef = useRef(false);
+
+  const {
+    captureOriginalViewBox,
+    zoomToTarget,
+    zoomIn,
+    zoomOut,
+    resetView,
+    fitToScreen,
+    currentViewBoxRef,
+  } = useViewBoxCamera({ svgRef });
+
+  // Após injetar o SVG, captura a ref do <svg> real
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    const svgContainer = container.querySelector(".processogram-svg-container");
+    if (!svgContainer) return;
+
+    const svgEl = svgContainer.querySelector("svg");
+    if (!svgEl) return;
+
+    // Garante que o SVG tem preserveAspectRatio
+    svgEl.setAttribute("preserveAspectRatio", "xMidYMid meet");
+    // Garante que o SVG preenche o container
+    svgEl.style.width = "100%";
+    svgEl.style.height = "100%";
+
+    // Atribui a ref manualmente (o SVG vem de dangerouslySetInnerHTML)
+    (svgRef as React.MutableRefObject<SVGSVGElement | null>).current = svgEl;
+    svgReadyRef.current = true;
+    captureOriginalViewBox();
+  }, [svgContent, captureOriginalViewBox]);
+
+  // Pan + Scroll Zoom nativos
+  useSvgPanZoom(svgRef, containerRef, currentViewBoxRef);
+
+  // Reage a mudanças no zoomTargetId (vindo do useProcessogramState)
+  useEffect(() => {
+    if (!svgReadyRef.current) return;
+
+    if (!zoomTargetId) {
+      if (prevTargetRef.current !== null) {
+        zoomToTarget(null);
+        prevTargetRef.current = null;
+      }
+      return;
+    }
+
+    if (zoomTargetId === prevTargetRef.current) return;
+    prevTargetRef.current = zoomTargetId;
+
+    zoomToTarget(zoomTargetId);
+  }, [zoomTargetId, zoomToTarget]);
 
   return (
-    <div ref={wrapperRef} className="relative size-full overflow-hidden bg-background">
-      <TransformWrapper
-        ref={transformRef}
-        initialScale={1}
-        minScale={0.2}
-        maxScale={8}
-        centerOnInit
-        limitToBounds={false}
-        panning={{ velocityDisabled: false }}
-        doubleClick={{ mode: "zoomIn", step: 0.7 }}
-      >
-        <CameraController
-          zoomTargetId={zoomTargetId}
-          wrapperRef={wrapperRef}
-        />
-        <TransformComponent
-          wrapperClass="!size-full cursor-grab active:cursor-grabbing"
-          contentClass="!flex !items-center !justify-center"
-        >
-          <div
-            className="processogram-svg-container select-none"
-            dangerouslySetInnerHTML={{ __html: svgContent }}
-          />
-        </TransformComponent>
-      </TransformWrapper>
+    <div
+      ref={containerRef}
+      className="relative size-full overflow-hidden bg-background cursor-grab active:cursor-grabbing"
+    >
+      <div
+        className="processogram-svg-container size-full select-none"
+        dangerouslySetInnerHTML={{ __html: svgContent }}
+      />
 
+      {/* ── HUD de Controles ── */}
       <motion.div
+        data-hud
         initial={{ opacity: 0, x: 20 }}
         animate={{ opacity: 1, x: 0 }}
         transition={{ delay: 0.3, duration: 0.4 }}
         className="absolute right-4 top-1/2 z-10 flex -translate-y-1/2 flex-col gap-2"
       >
-        <HudButton
-          onClick={() => transformRef.current?.zoomIn(0.5)}
-          label="Zoom in"
-        >
+        <HudButton onClick={zoomIn} label="Zoom in">
           <ZoomIn className="size-4" />
         </HudButton>
 
-        <HudButton
-          onClick={() => transformRef.current?.zoomOut(0.5)}
-          label="Zoom out"
-        >
+        <HudButton onClick={zoomOut} label="Zoom out">
           <ZoomOut className="size-4" />
         </HudButton>
 
         <div className="my-1 h-px bg-white/10" />
 
-        <HudButton
-          onClick={() => transformRef.current?.centerView(1)}
-          label="Resetar zoom"
-        >
+        <HudButton onClick={resetView} label="Resetar zoom">
           <Maximize className="size-4" />
         </HudButton>
 
-        <HudButton
-          onClick={() => transformRef.current?.centerView()}
-          label="Ajustar à tela"
-        >
+        <HudButton onClick={fitToScreen} label="Ajustar à tela">
           <RotateCcw className="size-4" />
         </HudButton>
       </motion.div>
 
+      {/* ── Dica de uso ── */}
       <motion.div
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
