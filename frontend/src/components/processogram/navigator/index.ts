@@ -49,3 +49,17 @@ export {
 
 // Motor de Câmera (ViewBox math)
 export { getElementViewBox } from "./getElementViewBox";
+
+// Hierarquia & Breadcrumb
+export { getHierarchy, getElementIdentifier } from "./hierarchy";
+export type { HierarchyResult } from "./hierarchy";
+
+// Hooks
+export { useNavigator } from "./hooks/useNavigator";
+export type { UseNavigatorProps, UseNavigatorReturn } from "./hooks/useNavigator";
+
+export { useClickHandler } from "./hooks/useClickHandler";
+export type {
+  UseClickHandlerProps,
+  UseClickHandlerReturn,
+} from "./hooks/useClickHandler";
