@@ -7,22 +7,23 @@ import { ZoomIn, ZoomOut, Maximize, RotateCcw } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 /* =====================================================================
- * GSAP ViewBox Camera Engine
+ * GSAP ViewBox Camera Engine v2 — Hotfix
  *
- * Substitui react-zoom-pan-pinch por animação nativa de `viewBox`.
- * O SVG recalcula vetores nativamente a cada frame — zero desfoque,
- * enquadramento perfeito, centralização matemática exata.
+ * Anima nativamente o atributo `viewBox` do <svg>.
+ * O browser re-renderiza vetores a cada frame → zero desfoque.
  *
- * Fluxo:
- *   zoomTargetId muda → extractRealId → getBBox → padding adaptativo
- *   → gsap.to(svg, { attr: { viewBox } }) → animação fluida
+ * Hotfixes aplicados:
+ *   1. SVG dimensionamento: remove width/height fixos, usa CSS 100%
+ *   2. Cliques: distingue click vs pan via distância de arrasto
+ *   3. ViewBox sync: ref unificada entre câmera e pan/zoom
  * ===================================================================== */
 
 // ─── Constantes ────────────────────────────────────────────────────────
 const ANIM_DURATION = 0.8;
-const PADDING_FACTOR = 0.20; // 20% de padding ao redor do alvo
-const MIN_VIEWBOX_DIM = 120; // Dimensão mínima do viewBox (evita zoom excessivo em elementos minúsculos)
-const ZOOM_STEP = 0.25; // Fração de zoom por clique no HUD (25%)
+const PADDING_FACTOR = 0.20;
+const MIN_VIEWBOX_DIM = 120;
+const ZOOM_STEP = 0.25;
+const PAN_CLICK_THRESHOLD = 5; // pixels — abaixo disso é clique, acima é pan
 
 // ─── Tipos ─────────────────────────────────────────────────────────────
 interface ViewBox {
@@ -52,28 +53,15 @@ function viewBoxToString(vb: ViewBox): string {
   return `${vb.x} ${vb.y} ${vb.w} ${vb.h}`;
 }
 
-/**
- * Extrai o ID real do elemento a partir do token de zoom.
- * Formato: "zoom__<realId>__<levelIdx>__<timestamp>"
- * Fallback: devolve o próprio valor se não seguir o formato.
- */
 function extractRealId(zoomToken: string): string {
   if (!zoomToken.startsWith("zoom__")) return zoomToken;
   const parts = zoomToken.split("__");
   return parts[1] ?? zoomToken;
 }
 
-/**
- * Calcula o viewBox alvo com padding adaptativo ao redor de um elemento SVG.
- *
- * Padding = max(PADDING_FACTOR × dimensão, MIN_VIEWBOX_DIM / 4).
- * Isso garante que elementos muito pequenos (ex: um leitão) não sejam
- * enquadrados tão de perto que percam contexto visual.
- */
 function computeTargetViewBox(element: SVGGraphicsElement): ViewBox {
   const bbox = element.getBBox();
 
-  // Padding adaptativo: 20% da dimensão, com mínimo absoluto
   const rawPadX = bbox.width * PADDING_FACTOR;
   const rawPadY = bbox.height * PADDING_FACTOR;
   const minPad = MIN_VIEWBOX_DIM / 4;
@@ -83,11 +71,9 @@ function computeTargetViewBox(element: SVGGraphicsElement): ViewBox {
   let w = bbox.width + padX * 2;
   let h = bbox.height + padY * 2;
 
-  // Garante dimensão mínima para elementos microscópicos
   if (w < MIN_VIEWBOX_DIM) {
     const diff = MIN_VIEWBOX_DIM - w;
     w = MIN_VIEWBOX_DIM;
-    // Re-centraliza
     return {
       x: bbox.x - padX - diff / 2,
       y: bbox.y - padY - (MIN_VIEWBOX_DIM - h) / 2,
@@ -106,12 +92,37 @@ function computeTargetViewBox(element: SVGGraphicsElement): ViewBox {
     };
   }
 
-  return {
-    x: bbox.x - padX,
-    y: bbox.y - padY,
-    w,
-    h,
-  };
+  return { x: bbox.x - padX, y: bbox.y - padY, w, h };
+}
+
+/**
+ * Sanitiza o <svg> injetado:
+ *  - Remove atributos width/height fixos (ex: width="1920" height="1080")
+ *  - Se não houver viewBox, cria um a partir de width/height antes de removê-los
+ *  - Aplica preserveAspectRatio para enquadramento correto
+ */
+function sanitizeSvgElement(svgEl: SVGSVGElement): void {
+  const existingViewBox = svgEl.getAttribute("viewBox");
+
+  // Se não tem viewBox, tenta criar a partir de width/height
+  if (!existingViewBox) {
+    const w = svgEl.getAttribute("width");
+    const h = svgEl.getAttribute("height");
+    if (w && h) {
+      const wNum = parseFloat(w);
+      const hNum = parseFloat(h);
+      if (!Number.isNaN(wNum) && !Number.isNaN(hNum) && wNum > 0 && hNum > 0) {
+        svgEl.setAttribute("viewBox", `0 0 ${wNum} ${hNum}`);
+      }
+    }
+  }
+
+  // Remove dimensões fixas — o SVG deve obedecer ao container via CSS
+  svgEl.removeAttribute("width");
+  svgEl.removeAttribute("height");
+
+  // Garante enquadramento proporcional centralizado
+  svgEl.setAttribute("preserveAspectRatio", "xMidYMid meet");
 }
 
 // ─── HUD Button ────────────────────────────────────────────────────────
@@ -121,7 +132,10 @@ function HudButton({ onClick, label, children, className }: HudButtonProps) {
     <motion.button
       whileHover={{ scale: 1.1 }}
       whileTap={{ scale: 0.95 }}
-      onClick={onClick}
+      onClick={(e) => {
+        e.stopPropagation();
+        onClick();
+      }}
       aria-label={label}
       className={cn(
         "flex size-10 items-center justify-center rounded-md",
@@ -137,16 +151,11 @@ function HudButton({ onClick, label, children, className }: HudButtonProps) {
 
 // ─── Hook: useViewBoxCamera ────────────────────────────────────────────
 
-interface UseViewBoxCameraOptions {
-  svgRef: React.RefObject<SVGSVGElement | null>;
-}
-
-function useViewBoxCamera({ svgRef }: UseViewBoxCameraOptions) {
+function useViewBoxCamera(svgRef: React.RefObject<SVGSVGElement | null>) {
   const originalViewBoxRef = useRef<ViewBox | null>(null);
   const currentViewBoxRef = useRef<ViewBox | null>(null);
   const tweenRef = useRef<gsap.core.Tween | null>(null);
 
-  // Captura o viewBox original do SVG após a primeira renderização
   const captureOriginalViewBox = useCallback(() => {
     const svg = svgRef.current;
     if (!svg || originalViewBoxRef.current) return;
@@ -161,22 +170,34 @@ function useViewBoxCamera({ svgRef }: UseViewBoxCameraOptions) {
     }
 
     // Fallback: calcula do bounding box inteiro do SVG
-    const bbox = svg.getBBox();
-    if (bbox.width > 0 && bbox.height > 0) {
-      const vb: ViewBox = { x: bbox.x, y: bbox.y, w: bbox.width, h: bbox.height };
-      originalViewBoxRef.current = vb;
-      currentViewBoxRef.current = { ...vb };
-      svg.setAttribute("viewBox", viewBoxToString(vb));
+    try {
+      const bbox = svg.getBBox();
+      if (bbox.width > 0 && bbox.height > 0) {
+        const vb: ViewBox = { x: bbox.x, y: bbox.y, w: bbox.width, h: bbox.height };
+        originalViewBoxRef.current = vb;
+        currentViewBoxRef.current = { ...vb };
+        svg.setAttribute("viewBox", viewBoxToString(vb));
+      }
+    } catch {
+      // getBBox pode falhar se o SVG não está renderizado ainda
     }
   }, [svgRef]);
 
-  // Anima para um viewBox específico
   const animateTo = useCallback(
     (target: ViewBox, duration = ANIM_DURATION) => {
       const svg = svgRef.current;
-      if (!svg || !currentViewBoxRef.current) return;
+      if (!svg) return;
 
-      // Mata animação anterior (evita sobreposição)
+      // Se não temos viewBox atual, captura e aplica direto
+      if (!currentViewBoxRef.current) {
+        captureOriginalViewBox();
+        if (!currentViewBoxRef.current) {
+          svg.setAttribute("viewBox", viewBoxToString(target));
+          currentViewBoxRef.current = { ...target };
+          return;
+        }
+      }
+
       tweenRef.current?.kill();
 
       const proxy = { ...currentViewBoxRef.current };
@@ -197,10 +218,9 @@ function useViewBoxCamera({ svgRef }: UseViewBoxCameraOptions) {
         },
       });
     },
-    [svgRef]
+    [svgRef, captureOriginalViewBox]
   );
 
-  // Zoom para um elemento alvo (ou reset se null)
   const zoomToTarget = useCallback(
     (targetId: string | null) => {
       const svg = svgRef.current;
@@ -208,7 +228,6 @@ function useViewBoxCamera({ svgRef }: UseViewBoxCameraOptions) {
 
       captureOriginalViewBox();
 
-      // Reset → volta ao viewBox original
       if (!targetId) {
         if (originalViewBoxRef.current) {
           animateTo(originalViewBoxRef.current);
@@ -223,15 +242,16 @@ function useViewBoxCamera({ svgRef }: UseViewBoxCameraOptions) {
 
       if (!element) return;
 
-      const targetVb = computeTargetViewBox(
-        element as SVGGraphicsElement
-      );
-      animateTo(targetVb);
+      try {
+        const targetVb = computeTargetViewBox(element as SVGGraphicsElement);
+        animateTo(targetVb);
+      } catch {
+        // getBBox pode falhar em elementos sem geometria
+      }
     },
     [svgRef, captureOriginalViewBox, animateTo]
   );
 
-  // HUD: Zoom In (reduz viewBox → aproxima)
   const zoomIn = useCallback(() => {
     if (!currentViewBoxRef.current) return;
     const vb = currentViewBoxRef.current;
@@ -245,7 +265,6 @@ function useViewBoxCamera({ svgRef }: UseViewBoxCameraOptions) {
     }, 0.4);
   }, [animateTo]);
 
-  // HUD: Zoom Out (expande viewBox → afasta)
   const zoomOut = useCallback(() => {
     if (!currentViewBoxRef.current) return;
     const vb = currentViewBoxRef.current;
@@ -259,29 +278,30 @@ function useViewBoxCamera({ svgRef }: UseViewBoxCameraOptions) {
     }, 0.4);
   }, [animateTo]);
 
-  // HUD: Reset (volta ao viewBox original com scale 1:1)
   const resetView = useCallback(() => {
     if (originalViewBoxRef.current) {
       animateTo(originalViewBoxRef.current);
     }
   }, [animateTo]);
 
-  // HUD: Fit to screen (ajusta o viewBox para caber o conteúdo inteiro)
   const fitToScreen = useCallback(() => {
     const svg = svgRef.current;
     if (!svg) return;
-    const bbox = svg.getBBox();
-    if (bbox.width <= 0 || bbox.height <= 0) return;
-    const pad = Math.max(bbox.width, bbox.height) * 0.05;
-    animateTo({
-      x: bbox.x - pad,
-      y: bbox.y - pad,
-      w: bbox.width + pad * 2,
-      h: bbox.height + pad * 2,
-    });
+    try {
+      const bbox = svg.getBBox();
+      if (bbox.width <= 0 || bbox.height <= 0) return;
+      const pad = Math.max(bbox.width, bbox.height) * 0.05;
+      animateTo({
+        x: bbox.x - pad,
+        y: bbox.y - pad,
+        w: bbox.width + pad * 2,
+        h: bbox.height + pad * 2,
+      });
+    } catch {
+      // getBBox pode falhar
+    }
   }, [svgRef, animateTo]);
 
-  // Cleanup: mata tweens pendentes ao desmontar
   useEffect(() => {
     return () => {
       tweenRef.current?.kill();
@@ -291,7 +311,7 @@ function useViewBoxCamera({ svgRef }: UseViewBoxCameraOptions) {
   return { captureOriginalViewBox, zoomToTarget, zoomIn, zoomOut, resetView, fitToScreen, currentViewBoxRef };
 }
 
-// ─── Hook: useSvgPanZoom (pan + scroll zoom nativos) ───────────────────
+// ─── Hook: useSvgPanZoom ───────────────────────────────────────────────
 
 function useSvgPanZoom(
   svgRef: React.RefObject<SVGSVGElement | null>,
@@ -300,20 +320,28 @@ function useSvgPanZoom(
 ) {
   const isPanningRef = useRef(false);
   const panStartRef = useRef({ x: 0, y: 0 });
+  const pointerStartRef = useRef({ x: 0, y: 0 });
+  const didDragRef = useRef(false);
+  const activePointerIdRef = useRef<number | null>(null);
 
   useEffect(() => {
     const container = containerRef.current;
-    const svg = svgRef.current;
-    if (!container || !svg) return;
+    if (!container) return;
 
-    // ── Scroll Zoom ──
+    function getSvg() {
+      return svgRef.current;
+    }
+
+    // ── Scroll Zoom (centrado no cursor) ──
     function handleWheel(e: WheelEvent) {
       e.preventDefault();
+      const svg = getSvg();
       const vb = currentViewBoxRef.current;
-      if (!vb) return;
+      if (!svg || !vb) return;
 
-      const rect = svg!.getBoundingClientRect();
-      // Posição normalizada do cursor dentro do SVG (0..1)
+      const rect = svg.getBoundingClientRect();
+      if (rect.width === 0 || rect.height === 0) return;
+
       const normX = (e.clientX - rect.left) / rect.width;
       const normY = (e.clientY - rect.top) / rect.height;
 
@@ -321,32 +349,58 @@ function useSvgPanZoom(
       const newW = vb.w * factor;
       const newH = vb.h * factor;
 
-      // Zoom centrado no cursor
-      const newX = vb.x + (vb.w - newW) * normX;
-      const newY = vb.y + (vb.h - newH) * normY;
-
-      const newVb: ViewBox = { x: newX, y: newY, w: newW, h: newH };
-      svg!.setAttribute("viewBox", viewBoxToString(newVb));
+      const newVb: ViewBox = {
+        x: vb.x + (vb.w - newW) * normX,
+        y: vb.y + (vb.h - newH) * normY,
+        w: newW,
+        h: newH,
+      };
+      svg.setAttribute("viewBox", viewBoxToString(newVb));
       currentViewBoxRef.current = newVb;
     }
 
     // ── Pan (drag) ──
     function handlePointerDown(e: PointerEvent) {
-      // Ignora se for clique em botão do HUD
       if ((e.target as Element).closest("[data-hud]")) return;
+      // Só pan com botão primário
+      if (e.button !== 0) return;
+
       isPanningRef.current = true;
+      didDragRef.current = false;
+      activePointerIdRef.current = e.pointerId;
       panStartRef.current = { x: e.clientX, y: e.clientY };
-      container!.style.cursor = "grabbing";
-      container!.setPointerCapture(e.pointerId);
+      pointerStartRef.current = { x: e.clientX, y: e.clientY };
+      // NÃO chama setPointerCapture aqui — senão o browser
+      // redireciona o target e suprime o evento click sintético.
+      // A captura é ativada APENAS quando o arrasto excede o threshold.
     }
 
     function handlePointerMove(e: PointerEvent) {
       if (!isPanningRef.current) return;
+      const svg = getSvg();
       const vb = currentViewBoxRef.current;
-      if (!vb) return;
+      if (!svg || !vb) return;
 
-      const rect = svg!.getBoundingClientRect();
-      // Converte pixels de tela → unidades SVG
+      // Calcula distância total desde o início para determinar se é drag
+      const totalDx = e.clientX - pointerStartRef.current.x;
+      const totalDy = e.clientY - pointerStartRef.current.y;
+      const totalDist = Math.sqrt(totalDx * totalDx + totalDy * totalDy);
+
+      if (totalDist >= PAN_CLICK_THRESHOLD) {
+        // Cruza o threshold → agora É drag. Ativa pointer capture
+        // apenas na primeira vez para travar o pan no container.
+        if (!didDragRef.current) {
+          didDragRef.current = true;
+          if (activePointerIdRef.current !== null) {
+            try { container!.setPointerCapture(activePointerIdRef.current); } catch { /* ok */ }
+          }
+        }
+        container!.style.cursor = "grabbing";
+      }
+
+      const rect = svg.getBoundingClientRect();
+      if (rect.width === 0 || rect.height === 0) return;
+
       const scaleX = vb.w / rect.width;
       const scaleY = vb.h / rect.height;
 
@@ -354,15 +408,22 @@ function useSvgPanZoom(
       const dy = (panStartRef.current.y - e.clientY) * scaleY;
 
       const newVb: ViewBox = { x: vb.x + dx, y: vb.y + dy, w: vb.w, h: vb.h };
-      svg!.setAttribute("viewBox", viewBoxToString(newVb));
+      svg.setAttribute("viewBox", viewBoxToString(newVb));
       currentViewBoxRef.current = newVb;
 
       panStartRef.current = { x: e.clientX, y: e.clientY };
     }
 
-    function handlePointerUp() {
+    function handlePointerUp(e: PointerEvent) {
+      const wasDragging = didDragRef.current;
       isPanningRef.current = false;
+      activePointerIdRef.current = null;
       container!.style.cursor = "";
+
+      // Só libera pointer capture se realmente capturou (i.e., arrastou)
+      if (wasDragging) {
+        try { container!.releasePointerCapture(e.pointerId); } catch { /* ok */ }
+      }
     }
 
     container.addEventListener("wheel", handleWheel, { passive: false });
@@ -379,6 +440,8 @@ function useSvgPanZoom(
       container.removeEventListener("pointerleave", handlePointerUp);
     };
   }, [svgRef, containerRef, currentViewBoxRef]);
+
+  return { didDragRef };
 }
 
 // ─── Componente Principal ──────────────────────────────────────────────
@@ -405,9 +468,9 @@ export function ProcessogramViewer({
     resetView,
     fitToScreen,
     currentViewBoxRef,
-  } = useViewBoxCamera({ svgRef });
+  } = useViewBoxCamera(svgRef);
 
-  // Após injetar o SVG, captura a ref do <svg> real
+  // Após injetar o SVG, sanitiza e captura o viewBox original
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
@@ -418,11 +481,8 @@ export function ProcessogramViewer({
     const svgEl = svgContainer.querySelector("svg");
     if (!svgEl) return;
 
-    // Garante que o SVG tem preserveAspectRatio
-    svgEl.setAttribute("preserveAspectRatio", "xMidYMid meet");
-    // Garante que o SVG preenche o container
-    svgEl.style.width = "100%";
-    svgEl.style.height = "100%";
+    // ── Fix 1: Sanitização — remove dimensões fixas, garante viewBox ──
+    sanitizeSvgElement(svgEl);
 
     // Atribui a ref manualmente (o SVG vem de dangerouslySetInnerHTML)
     (svgRef as React.MutableRefObject<SVGSVGElement | null>).current = svgEl;
@@ -431,7 +491,28 @@ export function ProcessogramViewer({
   }, [svgContent, captureOriginalViewBox]);
 
   // Pan + Scroll Zoom nativos
-  useSvgPanZoom(svgRef, containerRef, currentViewBoxRef);
+  const { didDragRef } = useSvgPanZoom(svgRef, containerRef, currentViewBoxRef);
+
+  // ── Fix 2: Click handler que distingue drag de clique ──
+  // O click event do React só dispara DEPOIS do pointerup.
+  // Se o usuário arrastou (didDragRef = true), engolimos o click aqui
+  // para que ele NÃO chegue ao InteractiveLayer.
+  const handleContainerClick = useCallback(
+    (e: React.MouseEvent) => {
+      if (didDragRef.current) {
+        // Foi drag, não click — bloqueia propagação para o InteractiveLayer
+        didDragRef.current = false;
+        e.stopPropagation();
+        return;
+      }
+      // Se clicou no HUD, o botão já tem seu próprio onClick
+      if ((e.target as Element).closest("[data-hud]")) return;
+
+      // Click real: NÃO chamamos stopPropagation — o evento borbulha
+      // até o InteractiveLayer, que resolve o elemento analisável.
+    },
+    [didDragRef]
+  );
 
   // Reage a mudanças no zoomTargetId (vindo do useProcessogramState)
   useEffect(() => {
@@ -454,10 +535,12 @@ export function ProcessogramViewer({
   return (
     <div
       ref={containerRef}
+      onClick={handleContainerClick}
       className="relative size-full overflow-hidden bg-background cursor-grab active:cursor-grabbing"
     >
+      {/* O SVG ocupa 100% via CSS — sem width/height fixos */}
       <div
-        className="processogram-svg-container size-full select-none"
+        className="processogram-svg-container size-full select-none [&>svg]:size-full [&>svg]:object-contain"
         dangerouslySetInnerHTML={{ __html: svgContent }}
       />
 
@@ -490,6 +573,7 @@ export function ProcessogramViewer({
 
       {/* ── Dica de uso ── */}
       <motion.div
+        data-hud
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         transition={{ delay: 0.6 }}
