@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
@@ -18,7 +18,7 @@ import type { Processogram, ProcessogramElement, ProcessogramQuestion } from "@/
 
 type ViewState =
   | { status: "loading" }
-  | { status: "ready"; processogram: Processogram; svgContent: string }
+  | { status: "ready"; processogram: Processogram; svgUrl: string }
   | { status: "error"; message: string };
 
 export default function PublicViewPage() {
@@ -28,6 +28,13 @@ export default function PublicViewPage() {
   const [state, setState] = useState<ViewState>({ status: "loading" });
   const [elements, setElements] = useState<ProcessogramElement[]>([]);
   const [questions, setQuestions] = useState<ProcessogramQuestion[]>([]);
+
+  /** Ref do <svg> DOM real — preenchida pelo ProcessogramViewer via onSvgReady. */
+  const svgElementRef = useRef<SVGSVGElement | null>(null);
+
+  const handleSvgReady = useCallback((svgEl: SVGSVGElement) => {
+    svgElementRef.current = svgEl;
+  }, []);
 
   const {
     selectedElementId,
@@ -71,20 +78,15 @@ export default function PublicViewPage() {
       try {
         const theme = resolvedTheme === "light" ? "light" : "dark";
 
-        const [{ data: processogram }, { data: svgContent }] =
-          await Promise.all([
-            api.get<Processogram>(`/processograms/${params.id}`, {
-              signal: controller.signal,
-            }),
-            api.get<string>(`/processograms/${params.id}/svg`, {
-              params: { theme },
-              signal: controller.signal,
-              responseType: "text",
-              transformResponse: [(data: string) => data],
-            }),
-          ]);
+        const { data: processogram } = await api.get<Processogram>(
+          `/processograms/${params.id}`,
+          { signal: controller.signal },
+        );
 
-        setState({ status: "ready", processogram, svgContent });
+        // Monta a URL que o react-inlinesvg usará para fazer fetch
+        const svgUrl = `/api/v1/processograms/${params.id}/svg?theme=${theme}`;
+
+        setState({ status: "ready", processogram, svgUrl });
 
         processogramService
           .getElementData(params.id!)
@@ -207,8 +209,8 @@ export default function PublicViewPage() {
                 breadcrumbPath={breadcrumbPath}
               >
                 <ProcessogramViewer
-                  svgContent={state.svgContent}
-                  zoomTargetId={zoomTargetId}
+                  svgUrl={state.svgUrl}
+                  onSvgReady={handleSvgReady}
                 />
               </ProcessogramInteractiveLayer>
 
