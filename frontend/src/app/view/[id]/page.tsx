@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
@@ -9,17 +9,44 @@ import { useTheme } from "next-themes";
 import { api } from "@/lib/api";
 import { useAuthStore } from "@/store/authStore";
 import { ProcessogramViewer } from "@/components/processogram/ProcessogramViewer";
-import { ProcessogramInteractiveLayer } from "@/components/processogram/ProcessogramInteractiveLayer";
 import { ProcessogramBreadcrumb } from "@/components/processogram/ProcessogramBreadcrumb";
 import { SidePanel } from "@/components/processogram/SidePanel";
-import { useProcessogramState } from "@/hooks/useProcessogramState";
+import { useSvgNavigatorLogic } from "@/components/processogram/navigator";
+import type { HierarchyItem } from "@/components/processogram/navigator";
 import { processogramService } from "@/services/processograms";
-import type { Processogram, ProcessogramElement, ProcessogramQuestion } from "@/types/processogram";
+import type {
+  Processogram,
+  ProcessogramElement,
+  ProcessogramQuestion,
+  BreadcrumbItem,
+  ActiveElementData,
+} from "@/types/processogram";
 
 type ViewState =
   | { status: "loading" }
   | { status: "ready"; processogram: Processogram; svgUrl: string }
   | { status: "error"; message: string };
+
+// ─── Mapeamento HierarchyItem → BreadcrumbItem ────────────────────────
+// O navigator usa `HierarchyItem`; a UI (breadcrumb, SidePanel) espera
+// `BreadcrumbItem`. Este mapeamento é a ponte entre os dois sistemas.
+
+const LEVEL_TO_ELEMENT_LEVEL: Record<string, BreadcrumbItem["levelName"]> = {
+  "Production System": "production system",
+  "Life Fate": "life-fate",
+  Phase: "phase",
+  Circumstance: "circumstance",
+};
+
+function hierarchyToBreadcrumb(
+  hierarchy: HierarchyItem[],
+): BreadcrumbItem[] {
+  return hierarchy.map((item) => ({
+    id: item.rawId,
+    label: item.name,
+    levelName: LEVEL_TO_ELEMENT_LEVEL[item.level] ?? "unknown",
+  }));
+}
 
 export default function PublicViewPage() {
   const params = useParams<{ id: string }>();
@@ -29,44 +56,101 @@ export default function PublicViewPage() {
   const [elements, setElements] = useState<ProcessogramElement[]>([]);
   const [questions, setQuestions] = useState<ProcessogramQuestion[]>([]);
 
-  /** Ref do <svg> DOM real — preenchida pelo ProcessogramViewer via onSvgReady. */
-  const svgElementRef = useRef<SVGSVGElement | null>(null);
+  // ─── Estado derivado do navigator (System B) ─────────────────────────
 
-  const handleSvgReady = useCallback((svgEl: SVGSVGElement) => {
-    svgElementRef.current = svgEl;
-  }, []);
+  /** ID do elemento atualmente enquadrado pela câmera. */
+  const [selectedElementId, setSelectedElementId] = useState<string | null>(null);
 
-  const {
-    selectedElementId,
-    activeElementData,
-    breadcrumbPath,
-    activeLevelIndex,
-    zoomTargetId,
-    handleDrilldown,
-    clearSelection,
-    navigateUp,
-  } = useProcessogramState(elements, questions);
+  /** Breadcrumb path para a UI. */
+  const [breadcrumbPath, setBreadcrumbPath] = useState<BreadcrumbItem[]>([]);
 
-  const handleElementSelect = useCallback(
-    (elementId: string) => {
-      if (selectedElementId === elementId) {
-        clearSelection();
-      } else {
-        handleDrilldown(elementId);
+  /** Nível ativo (0–3, -1 = nenhum). */
+  const [activeLevelIndex, setActiveLevelIndex] = useState<number>(-1);
+
+  /** Dados do elemento ativo para o SidePanel. */
+  const [activeElementData, setActiveElementData] = useState<ActiveElementData | null>(null);
+
+  // ─── Tema ────────────────────────────────────────────────────────────
+
+  const currentTheme: "dark" | "light" =
+    resolvedTheme === "light" ? "light" : "dark";
+
+  // ─── Callbacks do navigator ──────────────────────────────────────────
+
+  /**
+   * Chamado pelo navigator a cada mudança de nível.
+   * Atualiza o estado de UI (breadcrumb, SidePanel, etc.).
+   */
+  const handleNavigatorChange = useCallback(
+    (identifier: string, hierarchy: HierarchyItem[]) => {
+      const crumbs = hierarchyToBreadcrumb(hierarchy);
+      setBreadcrumbPath(crumbs);
+
+      const lastItem = hierarchy[hierarchy.length - 1];
+      if (lastItem) {
+        setSelectedElementId(lastItem.rawId);
+        setActiveLevelIndex(lastItem.levelNumber);
+
+        // Monta o ActiveElementData para o SidePanel
+        const elementLevel =
+          LEVEL_TO_ELEMENT_LEVEL[lastItem.level] ?? "unknown";
+        const matchingElement = elements.find(
+          (e) => e.elementId === lastItem.rawId,
+        );
+        const matchingQuestions = questions.filter(
+          (q) => q.elementId === lastItem.rawId,
+        );
+
+        setActiveElementData({
+          elementId: lastItem.rawId,
+          level: elementLevel,
+          label: lastItem.name,
+          description: matchingElement?.description ?? "",
+          parents: crumbs.slice(0, -1),
+          questions: matchingQuestions,
+        });
       }
     },
-    [selectedElementId, handleDrilldown, clearSelection]
+    [elements, questions],
   );
 
-  useEffect(() => {
-    console.log("Current State:", {
-      selectedElementId,
-      activeLevelIndex,
-      zoomTargetId,
-      breadcrumbPath,
-      activeElementData,
+  /**
+   * Chamado pelo navigator quando o utilizador faz drill-up além do root.
+   * Limpa toda a seleção e volta à visão geral.
+   */
+  const handleNavigatorClose = useCallback(() => {
+    setSelectedElementId(null);
+    setBreadcrumbPath([]);
+    setActiveLevelIndex(-1);
+    setActiveElementData(null);
+  }, []);
+
+  // ─── Orquestrador (System B) ─────────────────────────────────────────
+
+  const { updateSvgElement, onMouseMove, onMouseLeave } =
+    useSvgNavigatorLogic({
+      currentTheme,
+      onChange: handleNavigatorChange,
+      onClose: handleNavigatorClose,
     });
-  }, [selectedElementId, activeLevelIndex, zoomTargetId, breadcrumbPath, activeElementData]);
+
+  // ─── Callbacks da UI ─────────────────────────────────────────────────
+
+  const clearSelection = useCallback(() => {
+    handleNavigatorClose();
+  }, [handleNavigatorClose]);
+
+  const navigateUp = useCallback(
+    (levelIndex: number) => {
+      // O breadcrumb clicado — usa o SidePanel/breadcrumb para navegar
+      // Para simplificar: limpa seleção (o utilizador pode re-clicar no SVG)
+      // TODO: Implementar drill-up programático via EventBus no navigator
+      if (levelIndex < 0) {
+        clearSelection();
+      }
+    },
+    [clearSelection],
+  );
 
   useEffect(() => {
     if (!params.id) return;
@@ -202,17 +286,12 @@ export default function PublicViewPage() {
                 onReset={clearSelection}
               />
 
-              <ProcessogramInteractiveLayer
-                onElementSelect={handleElementSelect}
-                selectedElementId={selectedElementId}
-                activeLevelIndex={activeLevelIndex}
-                breadcrumbPath={breadcrumbPath}
-              >
-                <ProcessogramViewer
-                  svgUrl={state.svgUrl}
-                  onSvgReady={handleSvgReady}
-                />
-              </ProcessogramInteractiveLayer>
+              <ProcessogramViewer
+                svgUrl={state.svgUrl}
+                onSvgReady={updateSvgElement}
+                onMouseMove={onMouseMove}
+                onMouseLeave={onMouseLeave}
+              />
 
               <SidePanel
                 processogramId={params.id!}

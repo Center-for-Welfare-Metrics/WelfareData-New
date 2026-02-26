@@ -1,17 +1,15 @@
 /**
  * ═══════════════════════════════════════════════════════════════════════
- * ProcessogramViewer — Shell para SVG Inline
+ * ProcessogramViewer — Shell para SVG Inline + Navegação Hierárquica
  * ═══════════════════════════════════════════════════════════════════════
  *
  * Renderiza o SVG como DOM real via `react-inlinesvg`.
- * Expõe a ref do <svg> para os hooks de câmera e interação.
- *
- * Etapa 1: Shell puro — sem câmera, sem pan/zoom, sem HUD.
- * O motor GSAP de viewBox será adicionado na Etapa 2.
+ * Integra o sistema de navegação (viewBox + isolamento visual)
+ * via `useSvgNavigatorLogic`.
  *
  * Decisão arquitetural (ver docs/frontend/svg_navigation_architecture.md):
  *   Antes: dangerouslySetInnerHTML + react-zoom-pan-pinch + hooks manuais
- *   Agora: react-inlinesvg + GSAP viewBox nativo (a implementar)
+ *   Agora: react-inlinesvg + GSAP viewBox nativo
  * ═══════════════════════════════════════════════════════════════════════
  */
 
@@ -23,7 +21,7 @@ import { motion } from "framer-motion";
 
 // ─── Tipos ─────────────────────────────────────────────────────────────
 
-interface ProcessogramViewerProps {
+export interface ProcessogramViewerProps {
   /**
    * URL do SVG a renderizar.
    * O `react-inlinesvg` faz fetch e injeta como DOM real.
@@ -32,10 +30,21 @@ interface ProcessogramViewerProps {
 
   /**
    * Callback que recebe a ref do <svg> DOM após carregamento.
-   * Os hooks de câmera e interação usam esta ref para manipular
-   * viewBox, getBBox, querySelector, etc.
+   * O orquestrador (useSvgNavigatorLogic) registra o elemento por aqui.
    */
   onSvgReady?: (svgElement: SVGSVGElement) => void;
+
+  /**
+   * Handler de mouse move do orquestrador.
+   * Detecta grupos semânticos sob o cursor para efeito de hover.
+   */
+  onMouseMove?: (e: React.MouseEvent) => void;
+
+  /**
+   * Handler de mouse leave do orquestrador.
+   * Limpa o hover quando o cursor sai do SVG.
+   */
+  onMouseLeave?: () => void;
 }
 
 // ─── Componente ────────────────────────────────────────────────────────
@@ -43,6 +52,8 @@ interface ProcessogramViewerProps {
 export function ProcessogramViewer({
   svgUrl,
   onSvgReady,
+  onMouseMove,
+  onMouseLeave,
 }: ProcessogramViewerProps) {
   /**
    * O react-inlinesvg chama `innerRef` com o <svg> DOM real
@@ -72,6 +83,8 @@ export function ProcessogramViewer({
       animate={{ opacity: 1 }}
       transition={{ duration: 0.4 }}
       className="processogram-svg-container relative size-full overflow-visible bg-background"
+      onMouseMove={onMouseMove}
+      onMouseLeave={onMouseLeave}
     >
       <SVG
         src={svgUrl}

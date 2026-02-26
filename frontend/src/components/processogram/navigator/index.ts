@@ -66,3 +66,10 @@ export type {
 
 export { useHoverEffects } from "./hooks/useHoverEffects";
 export type { UseHoverEffectsProps } from "./hooks/useHoverEffects";
+
+// Orquestrador (Etapa 5)
+export { useSvgNavigatorLogic } from "./useSvgNavigatorLogic";
+export type {
+  UseSvgNavigatorLogicProps,
+  UseSvgNavigatorLogicReturn,
+} from "./useSvgNavigatorLogic";
