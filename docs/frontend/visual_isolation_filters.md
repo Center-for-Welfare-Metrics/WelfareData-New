@@ -27,62 +27,79 @@ biológico sem poluir a visão do pesquisador.
 
 ---
 
-## 2. Classes CSS
+## 2. Mecanismo de Isolamento (GSAP Filter)
 
-Três classes CSS controlam o sistema de isolamento. São aplicadas **dinamicamente via JavaScript**
-no DOM do SVG — nunca hardcoded no markup.
+> **Nota:** O sistema anterior usava classes CSS (`.is-exploring`, `.is-active-zone`,
+> `.is-target-element`). Esse mecanismo foi **removido** e substituído por animação
+> direta de `filter` via GSAP no módulo `navigator/`.
 
-### `.is-exploring`
+O isolamento visual agora é aplicado **diretamente via GSAP** — sem classes CSS intermediárias:
 
-- **Aplicada em:** Tag `<svg>` raiz dentro de `.processogram-svg-container`
-- **Condição:** `activeLevelIndex >= 0 && breadcrumbPath.length > 0` (o usuário fez drill-down)
-- **Efeito:** Todos os filhos SVG recebem `brightness(0.3)` — o "mute geral"
+### Drill-down (`useNavigator.changeLevelTo`)
 
-### `.is-active-zone`
+- **Irmãos fora de foco:** `gsap.to(siblings, { filter: UNFOCUSED_FILTER })`
+  - Dark mode: `brightness(0.3)` — escurece preservando matizes
+  - Light mode: `grayscale(1)` — dessatura preservando luminosidade
+- **Elemento enquadrado + filhos:** `gsap.to(focused, { filter: FOCUSED_FILTER })`
+  - Dark mode: `brightness(1)` — brilho total
+  - Light mode: `grayscale(0)` — saturação total
 
-- **Aplicada em:** O nó `<g>` (ou elemento) do nível ativo no breadcrumb
-- **Condição:** `breadcrumbPath[activeLevelIndex]` existe e o nó DOM correspondente foi encontrado
-- **Efeito:** Restaura `brightness(1) !important` para si e todos os seus filhos — a "zona iluminada"
+### Hover (`useHoverEffects`)
 
-### `.is-target-element`
+- **Elemento sob o cursor:** FOCUSED_FILTER (brilho/saturação total)
+- **Irmãos do mesmo nível:** UNFOCUSED_FILTER (escurecidos/dessaturados)
+- **Mouse saiu:** restaura estado padrão do nível atual da câmera
 
-- **Aplicada em:** O nó do elemento selecionado (`selectedElementId`)
-- **Condição:** `selectedElementId` não é nulo e o nó DOM correspondente foi encontrado
-- **Efeito:** `brightness(1) + drop-shadow(0 0 8px rgba(255, 255, 255, 0.4)) !important` — glow de destaque
+### Constantes (`navigator/consts.ts`)
+
+```ts
+export const FOCUSED_FILTER = {
+  dark: "brightness(1)",
+  light: "grayscale(0)",
+};
+
+export const UNFOCUSED_FILTER = {
+  dark: "brightness(0.3)",
+  light: "grayscale(1)",
+};
+```
 
 ---
 
-## 3. Cascata CSS no DOM do SVG
+## 3. Cascata de Isolamento Visual
 
-A interação entre as classes segue a cascata CSS com especificidade crescente:
+O GSAP aplica filter diretamente nos elementos SVG. A prioridade é determinada
+pela ordem de execução, não por especificidade CSS:
 
 ```
                          ┌─────────────────────────────────────┐
-Nível 1: Mute Geral     │  svg.is-exploring * { b(0.3) }      │
+1. changeLevelTo()       │  Irmãos → UNFOCUSED_FILTER          │
+                         │  Alvo   → FOCUSED_FILTER            │
                          └────────────┬────────────────────────┘
-                                      │ ← !important override
+                                      │
                          ┌────────────▼────────────────────────┐
-Nível 2: Zona Ativa     │  .is-active-zone * { b(1) !imp }    │
+2. setFullBrightness()   │  Filhos do próximo nível            │
+                         │  → FOCUSED_FILTER (drill-down ready)│
                          └────────────┬────────────────────────┘
-                                      │ ← !important + higher specificity
+                                      │
                          ┌────────────▼────────────────────────┐
-Nível 3: Alvo Focado    │  .is-target-element { b(1)+glow }   │
+3. useHoverEffects       │  Hovered → FOCUSED_FILTER           │
+                         │  Siblings → UNFOCUSED_FILTER        │
                          └─────────────────────────────────────┘
 ```
 
-### Exemplo no DOM
+### Exemplo visual no DOM
 
 ```xml
-<svg class="is-exploring">                    ← brightness(0.3) em tudo
-  <g id="sistema--ps">                        ← escurecido
-    <g id="destino--lf" class="is-active-zone"> ← brightness(1), iluminado
-      <g id="fase--ph">                        ← herda brightness(1) do pai
-        <rect id="circ--ci_01" class="is-target-element"/>  ← glow
-        <rect id="circ--ci_02"/>               ← brightness(1), sem glow
+<svg>
+  <g id="sistema--ps">                        ← UNFOCUSED (escurecido)
+    <g id="destino--lf">                      ← FOCUSED (enquadrado pela câmera)
+      <g id="fase--ph1">                      ← FOCUSED (filho do próximo nível)
+      </g>
+      <g id="fase--ph2">                      ← FOCUSED (filho do próximo nível)
       </g>
     </g>
-    <g id="destino--lf_2">                    ← escurecido (fora da zona ativa)
-      <rect id="circ--ci_03"/>                ← escurecido
+    <g id="destino--lf_2">                    ← UNFOCUSED (irmão fora de foco)
     </g>
   </g>
 </svg>
@@ -92,39 +109,33 @@ Nível 3: Alvo Focado    │  .is-target-element { b(1)+glow }   │
 
 ## 4. Lógica de Aplicação Dinâmica
 
-O `useEffect` em `ProcessogramInteractiveLayer.tsx` gerencia as classes em 4 passos:
+> **Nota (migração):** O sistema anterior usava classes CSS (`.is-exploring`, `.is-active-zone`,
+> `.is-target-element`) aplicadas via `useEffect` em `ProcessogramInteractiveLayer.tsx`.
+> Esse sistema foi **deletado** e substituído pelo módulo `navigator/`.
+
+O sistema atual usa **GSAP** para animar `filter: brightness()` / `filter: grayscale()`
+diretamente nos elementos SVG, sem classes CSS intermediárias:
 
 ```
-useEffect([activeLevelIndex, breadcrumbPath, selectedElementId])
+Drill-down (useNavigator.changeLevelTo):
+  1. Calcula viewBox destino (getElementViewBox)
+  2. Seleciona irmãos fora de foco
+  3. gsap.to(irmãos, { filter: UNFOCUSED_FILTER })
+  4. gsap.fromTo(svg, { viewBox: atual }, { viewBox: destino })
+  5. onComplete → setFullBrightnessToCurrentLevel()
 
-  Passo 1 — RESET
-  │  Remover .is-exploring do <svg>
-  │  Remover .is-active-zone de todos os nós
-  │  Remover .is-target-element de todos os nós
-  │
-  Passo 2 — BLACKOUT
-  │  if (activeLevelIndex >= 0 && breadcrumbPath.length > 0)
-  │    → Adicionar .is-exploring no <svg>
-  │
-  Passo 3 — ACENDER ZONA
-  │  Buscar breadcrumbPath[activeLevelIndex].id no DOM
-  │    → Adicionar .is-active-zone nesse nó
-  │
-  Passo 4 — DESTACAR ALVO
-  │  if (selectedElementId !== null)
-  │    Buscar selectedElementId no DOM
-  │      → Adicionar .is-target-element nesse nó
+Hover (useHoverEffects):
+  1. onHover = id → gsap.to(hovered, { filter: FOCUSED_FILTER })
+                   → gsap.to(siblings, { filter: UNFOCUSED_FILTER })
+  2. onHover = null → restaura estado padrão do nível atual
 ```
 
-### Por que manipulação direta do DOM?
+### Vantagens sobre o sistema de classes CSS
 
-O SVG é injetado via `dangerouslySetInnerHTML` (conteúdo vindo do backend). React não tem
-referências para os nós internos do SVG. Portanto, usamos `querySelector` para encontrar
-os elementos e `classList.add/remove` para aplicar as classes. Isso é seguro porque:
-
-1. O `useEffect` faz reset completo a cada mudança de estado
-2. O cleanup remove todas as classes ao desmontar
-3. As classes são puramente visuais (não afetam estado React)
+1. **Transições animadas com easing** — GSAP interpola filter frame a frame
+2. **Sem leak de classes** — não precisa cleanup de classList
+3. **Tema-aware** — dark mode usa `brightness()`, light mode usa `grayscale()`
+4. **Integrado com a câmera** — isolamento visual acompanha a animação de viewBox
 
 ---
 
@@ -141,34 +152,40 @@ Todos os primitivos SVG (`path`, `rect`, `polygon`, `circle`, `ellipse`, `line`,
 
 ## 6. Arquivos Envolvidos
 
-| Arquivo                                          | Responsabilidade                                    |
-| ------------------------------------------------ | --------------------------------------------------- |
-| `frontend/src/app/globals.css`                   | Regras CSS de isolamento (brightness/transition)    |
-| `frontend/src/components/.../InteractiveLayer.tsx` | useEffect que aplica/remove classes no DOM do SVG |
-| `frontend/src/hooks/useProcessogramState.ts`     | Estado de navegação (activeLevelIndex, breadcrumb)  |
-| `frontend/src/app/view/[id]/page.tsx`            | Passa props de estado para InteractiveLayer         |
+| Arquivo                                                        | Responsabilidade                                        |
+| -------------------------------------------------------------- | ------------------------------------------------------- |
+| `frontend/src/app/globals.css`                                 | Regras CSS de transition (fallback, transições de base) |
+| `frontend/src/components/.../navigator/hooks/useNavigator.ts`  | Isolamento visual GSAP nos drill-down (UNFOCUSED_FILTER)|
+| `frontend/src/components/.../navigator/hooks/useHoverEffects.ts`| Isolamento visual GSAP no hover                        |
+| `frontend/src/components/.../navigator/consts.ts`              | FOCUSED_FILTER, UNFOCUSED_FILTER (dark/light)           |
+| `frontend/src/components/.../navigator/useSvgNavigatorLogic.ts`| Orquestrador: compõe os hooks acima                     |
+| `frontend/src/app/view/[id]/page.tsx`                          | Conecta orquestrador ao ProcessogramViewer              |
 
 ---
 
 ## 7. Testes Manuais
 
-### Cenário 1: Primeiro clique (nível 0)
-- [ ] SVG recebe classe `.is-exploring`
-- [ ] Todos os elementos escurecem (brightness 0.3)
-- [ ] O grupo `<g>` do nível 0 fica iluminado (`.is-active-zone`)
-- [ ] O elemento selecionado tem glow (`.is-target-element`)
+### Cenário 1: Primeiro clique (nível 0 → drill-down para ps)
+- [ ] viewBox anima suavemente para enquadrar o `<g>` clicado
+- [ ] Irmãos do elemento clicado escurecem via GSAP filter
+- [ ] O elemento alvo e seus filhos do próximo nível ficam com brilho total
 
 ### Cenário 2: Drill-down para nível 2
-- [ ] Zona ativa muda para o `<g>` do nível 2
-- [ ] Nível 0 e nível 1 ficam escurecidos
-- [ ] Apenas o nível 2 e seus filhos estão iluminados
+- [ ] viewBox anima para enquadrar o `<g>` de nível 2
+- [ ] Irmãos fora de foco escurecem (UNFOCUSED_FILTER)
+- [ ] Filhos do próximo nível ficam com brilho total (FOCUSED_FILTER)
 
-### Cenário 3: Reset (clearSelection)
-- [ ] `.is-exploring` removido do `<svg>`
-- [ ] Todas as classes `.is-active-zone` e `.is-target-element` removidas
-- [ ] Todos os elementos voltam a brightness(1) com transição suave
+### Cenário 3: Hover sobre grupo semântico
+- [ ] Grupo sob o cursor ganha brilho total (FOCUSED_FILTER)
+- [ ] Irmãos do mesmo nível escurecem (UNFOCUSED_FILTER)
+- [ ] Ao mover o cursor para fora: restaura estado padrão do nível
 
-### Cenário 4: Preservação de cores
+### Cenário 4: Drill-up (clique no vazio)
+- [ ] viewBox anima de volta para o nível anterior (historyLevel)
+- [ ] Isolamento visual restaurado para o nível anterior
+- [ ] Se no root e clicar no vazio: onClose() limpa tudo
+
+### Cenário 5: Preservação de cores (dark mode)
 - [ ] Um elemento rosa escurece para rosa-escuro (não cinza)
 - [ ] Um elemento verde escurece para verde-escuro (não cinza)
 - [ ] Nenhum `fill` ou `stroke` foi alterado no inspetor do DevTools

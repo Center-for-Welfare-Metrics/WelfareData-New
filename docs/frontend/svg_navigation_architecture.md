@@ -38,7 +38,7 @@ react-inlinesvg → <svg> DOM real injetado no React tree
 | Zoom | CSS `transform: scale()` | SVG `viewBox` nativo |
 | Qualidade | Desfoca em zoom | Zero desfoque (re-render vetorial) |
 | Câmera | Hooks manuais + `setPointerCapture` | GSAP `attr: { viewBox }` |
-| IDs semânticos | Regex adhoc em `useProcessogramState` | Módulo `navigator/` dedicado |
+| IDs semânticos | Regex adhoc (legado) | Módulo `navigator/` dedicado |
 | Click handling | Conflito pointer capture vs synthetic click | Sem pointer capture no click |
 
 ---
@@ -49,10 +49,17 @@ Localização: `frontend/src/components/processogram/navigator/`
 
 ```
 navigator/
-├── index.ts              ← Barrel export
-├── consts.ts             ← Constantes (níveis, animação, filtros visuais)
-├── types.ts              ← Tipagens (HierarchyItem, HistoryLevel, EventBus, ParsedElementId)
-└── extractInfoFromId.ts  ← Parser de IDs semânticos do SVG
+├── index.ts                  ← Barrel export
+├── consts.ts                 ← Constantes (níveis, animação, filtros visuais)
+├── types.ts                  ← Tipagens (HierarchyItem, HistoryLevel, EventBus, ParsedElementId)
+├── extractInfoFromId.ts      ← Parser de IDs semânticos do SVG
+├── getElementViewBox.ts      ← Cálculo de viewBox destino (câmera math)
+├── hierarchy.ts              ← Hierarquia DOM → breadcrumb path
+├── useSvgNavigatorLogic.ts   ← Orquestrador (compõe os 3 hooks abaixo)
+└── hooks/
+    ├── useNavigator.ts       ← Motor de câmera (GSAP viewBox + isolamento visual)
+    ├── useClickHandler.ts    ← Interceptação de cliques (drill-down/up/close)
+    └── useHoverEffects.ts    ← Efeitos visuais de hover (focus/mute)
 ```
 
 ### 2.1. Convenção de IDs (`extractInfoFromId.ts`)

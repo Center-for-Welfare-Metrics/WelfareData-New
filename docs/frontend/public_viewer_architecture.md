@@ -119,10 +119,10 @@ O visualizador detecta o tema atual via `useTheme()` e seleciona:
 ├─ Estado de Erro (ícone + mensagem + link voltar)
 │
 └─ Container Principal (div.relative.flex-1.overflow-hidden)
-    └─ ProcessogramInteractiveLayer (div.size-full)
-        └─ ProcessogramViewer (motion.div.size-full)
-            └─ <svg width="100%" height="100%" viewBox="..." preserveAspectRatio="xMidYMid meet">
-                 ← Injetado por react-inlinesvg, sanitizado por sanitizeSvgElement()
+    ├─ ProcessogramViewer (motion.div.size-full)
+    │   └─ <svg width="100%" height="100%" viewBox="..." preserveAspectRatio="xMidYMid meet">
+    │        ← Injetado por react-inlinesvg, sanitizado por sanitizeSvgElement()
+    │        ← Navegação hierárquica via useSvgNavigatorLogic (GSAP viewBox + filter)
     ├─ ProcessogramBreadcrumb (absolute, z-50, top-left)
     └─ SidePanel (absolute, z-30, right)
 ```
@@ -134,9 +134,8 @@ div.flex.h-screen.flex-col.overflow-hidden     ← viewport inteiro
   header.h-12.shrink-0                         ← cabeçalho fixo 48px
   div.relative.flex-1.overflow-hidden           ← restante (BFC para height:100%)
     motion.div.size-full                        ← AnimatePresence wrapper
-      div.size-full (InteractiveLayer)          ← intercepta cliques
-        motion.div.size-full (ProcessogramViewer) ← container do SVG
-          <svg width="100%" height="100%">      ← dimensões relativas ao pai
+      motion.div.size-full (ProcessogramViewer) ← container do SVG + handlers de mouse
+        <svg width="100%" height="100%">        ← dimensões relativas ao pai
 ```
 
 > **Nota:** O `overflow-hidden` no `flex-1` é essencial para criar um Block Formatting Context

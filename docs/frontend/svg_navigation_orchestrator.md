@@ -115,6 +115,7 @@ O navigator usa `HierarchyItem` (tipos internos). A UI (breadcrumb, SidePanel) u
 ## Próximos Passos
 
 1. **Testar no browser**: verificar se clique → drill-down anima o viewBox
-2. **Deletar System A**: remover `useProcessogramState.ts` e `ProcessogramInteractiveLayer.tsx`
+2. ~~**Deletar System A**~~: ✅ `useProcessogramState.ts` e `ProcessogramInteractiveLayer.tsx` removidos
 3. **Implementar drill-up via breadcrumb**: atualmente o breadcrumb apenas limpa a seleção; implementar navegação programática via EventBus
 4. **Verificar Correção 1**: garantir que `overflow-hidden` está no `div.flex-1` do page.tsx (necessário para centralizar o SVG)
+5. **Debug do clique**: investigar por que cliques no SVG não disparam drill-down
