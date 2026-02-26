@@ -32,6 +32,8 @@ Eventos de clique em elementos internos do SVG (`<text>`, `<path>`, `<tspan>`) *
 
 A solução é um listener global no `window` que intercepta **todos** os cliques. De qualquer `event.target`, usamos `target.closest("[id*='--lf']")` para subir na árvore DOM até encontrar o `<g>` com ID semântico.
 
+> **Pré-requisito:** Os IDs do SVG devem seguir a convenção `{slug}--{alias}`. SVGs com separadores alternativos (ex: `sow_lf`) são normalizados automaticamente no pipeline de upload pelo [`normalizeSemanticIdsPlugin`](../technical/09A-NORMALIZE_SEMANTIC_IDS_PLUGIN.md).
+
 ### Fluxo de Decisão
 
 ```

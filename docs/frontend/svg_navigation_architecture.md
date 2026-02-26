@@ -118,6 +118,25 @@ Se levelNumber === MAX_LEVEL  → FOLHA (não navega mais fundo)
 
 O parser **nunca** faz `document.querySelector` — é uma função pura que opera apenas na string do ID. A resolução do elemento DOM é feita por outros módulos (`InteractiveLayer`, `hierarchy`).
 
+### 2.3. Pré-requisito: Normalização de IDs no Backend
+
+O parser do frontend depende da convenção `{slug}--{alias}`. SVGs exportados por diferentes editores (Illustrator, Inkscape) podem usar `_` ao invés de `--` como separador:
+
+```
+sow_lf          ← Illustrator (não reconhecido pelo frontend)
+sow--lf         ← Convenção canônica (reconhecido)
+```
+
+O backend resolve isso no pipeline SVGO com o **`normalizeSemanticIdsPlugin`**, que converte todos os IDs para a convenção `--` durante o upload:
+
+```
+Upload SVG → SVGO pipeline → normalizeSemanticIdsPlugin → IDs normalizados
+```
+
+> Documentação completa do plugin: [`docs/technical/09A-NORMALIZE_SEMANTIC_IDS_PLUGIN.md`](../technical/09A-NORMALIZE_SEMANTIC_IDS_PLUGIN.md)
+
+**Consequência:** O frontend pode usar uma regex simples (`/^(.+)--(ps|lf|ph|ci)\d*$/`) sem precisar lidar com múltiplos formatos de separador. A responsabilidade de normalização é inteiramente do backend.
+
 ---
 
 ## 3. Roadmap de Etapas

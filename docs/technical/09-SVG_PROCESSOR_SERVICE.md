@@ -10,12 +10,34 @@ src/infrastructure/services/svg/
 ├── index.ts                    # Exports
 ├── SvgProcessorService.ts      # Implementação principal
 └── plugins/
-    ├── index.ts                # Export de plugins
-    ├── fixMissingSvgIdPlugin.ts    # Garantir IDs hierárquicos
-    └── removeBxAttributesPlugin.ts  # Limpar sujeira de editores
+    ├── index.ts                        # Export de plugins
+    ├── normalizeSemanticIdsPlugin.ts    # Normalizar IDs _(alias) → --(alias)
+    ├── fixMissingSvgIdPlugin.ts         # Garantir IDs hierárquicos
+    └── removeBxAttributesPlugin.ts      # Limpar sujeira de editores
 ```
 
 ## Plugins SVGO
+
+### normalizeSemanticIdsPlugin *(novo)*
+Normaliza IDs de elementos SVG de diferentes convenções de editores (Illustrator, Inkscape) para a convenção canônica `{slug}--{alias}[-número]`.
+
+> Documentação completa: [`09A-NORMALIZE_SEMANTIC_IDS_PLUGIN.md`](./09A-NORMALIZE_SEMANTIC_IDS_PLUGIN.md)
+
+**Problema:** SVGs exportados por diferentes designers usam separadores inconsistentes:
+| Formato original | Normalizado |
+|-----------------|-------------|
+| `sow_lf` | `sow--lf` |
+| `pig_ci_54_` | `pig--ci-54` |
+| `conventional--intensive_ps` | `conventional-intensive--ps` |
+| `laying_hen--lf` | `laying_hen--lf` *(já correto — ignorado)* |
+
+**Regras:**
+- `_(alias)` → `--alias`
+- `_(alias)_(dígitos)_` → `--alias-dígitos`
+- `--` no slug colapsado para `-` (o único `--` no ID é o separador semântico)
+- IDs já normalizados (`--(ps|lf|ph|ci)`) são ignorados
+
+**Ordem no pipeline:** Executa **antes** do `fixMissingSvgIdPlugin` para normalizar IDs reais do designer antes que IDs genéricos sejam gerados.
 
 ### fixMissingSvgIdPlugin
 Garante que todos os elementos SVG relevantes tenham IDs compatíveis com o Frontend.
@@ -63,6 +85,10 @@ interface ProcessedSvgOutput {
 1. Buffer SVG recebido
        ↓
 2. Otimização SVGO (plugins aplicados)
+   a. preset-default (cleanupIds: false)
+   b. normalizeSemanticIdsPlugin (IDs _(alias) → --(alias))
+   c. fixMissingSvgIdPlugin (gera IDs para elementos sem ID)
+   d. removeBxAttributesPlugin (remove atributos de editores)
        ↓
 3. Extração de metadados (JSDOM)
        ↓

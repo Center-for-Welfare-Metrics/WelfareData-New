@@ -94,7 +94,7 @@ Após injeção, `sanitizeSvgElement()` prepara o SVG para o sistema de câmera:
 3. Define `preserveAspectRatio="xMidYMid meet"` para enquadramento centralizado
 4. Define `overflow="visible"` para transições de viewBox
 
-**Segurança:** O SVG passa por SVGO 4 no backend durante o upload — scripts maliciosos são removidos.
+**Segurança:** O SVG passa por SVGO 4 no backend durante o upload — scripts maliciosos são removidos, e IDs semânticos são normalizados para a convenção `{slug}--{alias}` ([ver `normalizeSemanticIdsPlugin`](../technical/09A-NORMALIZE_SEMANTIC_IDS_PLUGIN.md)).
 
 ### Tema Responsivo
 

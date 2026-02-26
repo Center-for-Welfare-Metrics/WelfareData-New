@@ -11,6 +11,7 @@ import {
 } from '../../../application/interfaces/ISvgProcessor';
 import { IRasterImage } from '../../../domain/interfaces/IProcessogram';
 import {
+  normalizeSemanticIdsPlugin,
   fixMissingSvgIdPlugin,
   removeBxAttributesPlugin,
   extractInteractiveIds,
@@ -109,6 +110,7 @@ export class SvgProcessorService implements ISvgProcessor {
             },
           },
         },
+        normalizeSemanticIdsPlugin,
         fixMissingSvgIdPlugin,
         removeBxAttributesPlugin,
       ] as any[],
