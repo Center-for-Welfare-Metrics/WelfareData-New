@@ -34,7 +34,6 @@ import { useNavigator } from "./hooks/useNavigator";
 import { useClickHandler } from "./hooks/useClickHandler";
 import { useHoverEffects } from "./hooks/useHoverEffects";
 import { getHierarchy, getElementIdentifier } from "./hierarchy";
-import { isNavigableId } from "./extractInfoFromId";
 import {
   FOCUSED_FILTER,
   ANIMATION_DURATION,
@@ -111,8 +110,8 @@ export function useSvgNavigatorLogic({
   /** Histórico de navegação: nível → último ID visitado. */
   const historyLevelRef = useRef<HistoryLevel>({});
 
-  /** Nível numérico atual da câmera (0–3). -1 = nenhum nível ativo. */
-  const currentLevelRef = useRef<number>(-1);
+  /** Nível numérico atual da câmera (0–3). 0 = root visível. */
+  const currentLevelRef = useRef<number>(0);
 
   /** ID do elemento atualmente enquadrado pela câmera. */
   const currentElementIdRef = useRef<string | null>(null);
@@ -283,7 +282,7 @@ export function useSvgNavigatorLogic({
         `[id*="${nextLevelKey}"]`,
       );
 
-      if (hovered && isNavigableId(hovered.id)) {
+      if (hovered) {
         setOnHover(hovered.id);
       } else {
         setOnHover(null);

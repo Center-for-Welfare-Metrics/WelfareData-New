@@ -141,13 +141,16 @@ export function useClickHandler({
       // ── LOCK: animação em curso → ignora ──
       if (lockInteractionRef.current) return;
 
+      // ── GUARD: clique fora do SVG → ignora silenciosamente ──
+      const target = event.target as SVGElement;
+      if (!svgElement.contains(target)) return;
+
       // ── Impede propagação para outros listeners ──
       event.stopPropagation();
 
       // ── Limpa hover ao clicar ──
       setOnHover(null);
 
-      const target = event.target as SVGElement;
       const clickedStage = getClickedStage(target, currentLevelRef.current);
 
       if (clickedStage) {

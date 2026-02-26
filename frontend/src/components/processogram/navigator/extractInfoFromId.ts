@@ -29,32 +29,50 @@ import type {
   ElementIdInfo,
 } from "./types";
 
-// ─── RegExp central ────────────────────────────────────────────────────
+// ─── Helpers internos de parsing ───────────────────────────────────────
 //
-// Captura dois grupos:
-//   1. Tudo ANTES do último `--` → baseName
-//   2. O alias de nível (ps|lf|ph|ci) após o `--`, seguido de dígitos opcionais
-//
-// Exemplos de match:
-//   "growing--lf1"       → groups: ["growing", "lf"]
-//   "heat-stress--ci3"   → groups: ["heat-stress", "ci"]
-//   "broiler--ps"        → groups: ["broiler", "ps"]
-//   "some-random-id"     → NO MATCH
+// Abordagem: split("--") → remove tudo que não é letra → lookup no LEVELS_DICT.
+// Funciona com TODOS os formatos de ID reais:
+//   "laying_hen--lf"       → split → "lf"       → "lf"  → nível 1  ✅
+//   "fan--ci008"            → split → "ci008"    → "ci"  → nível 3  ✅
+//   "hen--ci-42"            → split → "ci-42"    → "ci"  → nível 3  ✅
+//   "egg_belt--ci-58"       → split → "ci-58"    → "ci"  → nível 3  ✅
+//   "some-random-id"        → sem "--" → não navegável
 
-const NAVIGABLE_ID_REGEX = /^(.+)--(ps|lf|ph|ci)\d*$/;
+/**
+ * Extrai o alias de nível puro (só letras) da parte após `--`.
+ * Retorna `null` se o ID não contém `--` ou o alias não é reconhecido.
+ */
+function extractAlias(id: string): LevelAlias | null {
+  const separatorIndex = id.indexOf("--");
+  if (separatorIndex === -1) return null;
+
+  const afterSeparator = id.slice(separatorIndex + 2);
+  const lettersOnly = afterSeparator.replace(/[^a-zA-Z]/g, "");
+
+  return lettersOnly in LEVEL_LABELS ? (lettersOnly as LevelAlias) : null;
+}
+
+/**
+ * Extrai o baseName (tudo antes do `--`).
+ */
+function extractBaseName(id: string): string {
+  const separatorIndex = id.indexOf("--");
+  return separatorIndex !== -1 ? id.slice(0, separatorIndex) : id;
+}
 
 // ─── Validação Rápida ──────────────────────────────────────────────────
 
 /**
  * Verifica se um ID segue a convenção navegável.
- * Mais rápido que `parseElementId` quando só se precisa de um boolean.
  *
  * @example
  * isNavigableId("growing--lf1")   // true
+ * isNavigableId("hen--ci-42")     // true
  * isNavigableId("some-random-id") // false
  */
 export function isNavigableId(id: string): boolean {
-  return NAVIGABLE_ID_REGEX.test(id);
+  return extractAlias(id) !== null;
 }
 
 // ─── Parser Principal ──────────────────────────────────────────────────
@@ -77,6 +95,17 @@ export function isNavigableId(id: string): boolean {
  * //   isNavigable: true,
  * // }
  *
+ * // Formato com hífen antes do número (real nos SVGs):
+ * const ci = parseElementId("hen--ci-42");
+ * // {
+ * //   rawId:       "hen--ci-42",
+ * //   baseName:    "hen",
+ * //   levelAlias:  "ci",
+ * //   levelNumber: 3,
+ * //   levelLabel:  "Circumstance",
+ * //   isNavigable: true,
+ * // }
+ *
  * const unknown = parseElementId("random-element");
  * // {
  * //   rawId:       "random-element",
@@ -88,9 +117,9 @@ export function isNavigableId(id: string): boolean {
  * // }
  */
 export function parseElementId(id: string): ElementIdInfo {
-  const match = id.match(NAVIGABLE_ID_REGEX);
+  const alias = extractAlias(id);
 
-  if (!match) {
+  if (!alias) {
     return {
       rawId: id,
       baseName: id,
@@ -101,8 +130,7 @@ export function parseElementId(id: string): ElementIdInfo {
     } satisfies UnparsedElementId;
   }
 
-  const baseName = match[1];
-  const alias = match[2] as LevelAlias;
+  const baseName = extractBaseName(id);
   const levelNumber = LEVELS_DICT[`--${alias}`] ?? -1;
   const levelLabel = LEVEL_LABELS[alias] ?? alias;
 
