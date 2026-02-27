@@ -11,8 +11,10 @@ Após a análise automática do processograma pela IA (Gemini), os dados gerados
 | Método | Rota | Auth | Role | Descrição |
 |--------|------|------|------|-----------|
 | `GET` | `/processograms/:processogramId/data` | ✅ | any | Lista todas as descrições de um processograma |
+| `GET` | `/processograms/:processogramId/data/public` | ❌ | — | Lista descrições (rota pública, shareability) |
 | `PUT` | `/processogram-data/:id` | ✅ | admin | Edita uma descrição específica |
 | `GET` | `/processograms/:processogramId/questions` | ✅ | any | Lista todas as questões de um processograma |
+| `GET` | `/processograms/:processogramId/questions/public` | ❌ | — | Lista questões (rota pública, usada pelo SidePanel) |
 | `PUT` | `/processogram-questions/:id` | ✅ | admin | Edita uma questão específica |
 
 ---
@@ -98,8 +100,8 @@ Retorna todas as `ProcessogramQuestion` vinculadas ao processograma, ordenadas p
     "id": "...",
     "processogramId": "...",
     "elementId": "sow--ps",
-    "question": "Qual o principal sistema de produção?",
-    "options": ["Intensivo", "Extensivo", "Semi-intensivo"],
+    "question": "What is the main production system?",
+    "options": ["Intensive", "Extensive", "Semi-intensive", "Free-range"],
     "correctAnswerIndex": 0,
     "createdAt": "...",
     "updatedAt": "..."
@@ -158,11 +160,13 @@ Refinamento: se `options` e `correctAnswerIndex` forem enviados juntos, `correct
 ## Fluxo Human-in-the-Loop
 
 ```
-1. Admin faz POST /:id/analyze       → IA gera dados brutos
+1. Admin faz POST /:id/analyze       → IA gera descrições + perguntas
 2. Admin faz GET /:processogramId/data     → Visualiza descrições geradas
 3. Admin faz PUT /processogram-data/:id    → Corrige/refina descrição
-4. (Futuro) Admin faz GET /:processogramId/questions → Visualiza questões
-5. (Futuro) Admin faz PUT /processogram-questions/:id → Corrige questão
+4. Admin faz GET /:processogramId/questions → Visualiza questões geradas
+5. Admin faz PUT /processogram-questions/:id → Corrige questão
 ```
 
-> As questões ainda não são geradas automaticamente pela IA (removido do prompt atual), mas a infraestrutura está pronta para quando forem reintegradas.
+> As rotas públicas (`/data/public`, `/questions/public`) são usadas pelo frontend
+> (`SidePanel`) para exibir descrições e sugestões de perguntas (chips) sem
+> necessidade de autenticação.

@@ -3,10 +3,10 @@
 ## Visão Geral
 
 Sistema de análise automatizada on-demand que extrai a hierarquia de elementos de um processograma (SVG) e gera:
-1. **Descrições técnicas** concisas para cada elemento
-2. **Perguntas de quiz** (múltipla escolha) para avaliação de conhecimento
+1. **Descrições técnicas** concisas para cada elemento (3-6 frases)
+2. **Perguntas de quiz** (múltipla escolha, 1 por elemento) para avaliação de conhecimento
 
-Utiliza o **Google Gemini 1.5 Flash** para processamento rápido e de baixo custo.
+Utiliza o **Google Gemini 2.5 Flash** em duas chamadas sequenciais (descrições → perguntas).
 
 ---
 
@@ -19,12 +19,12 @@ ProcessogramAIController.analyze
          ↓
 AnalyzeProcessogramUseCase
          ↓
-    ┌────┴────┬─────────┬─────────────┐
-    ↓         ↓         ↓             ↓
-MongoDB   GCS      Cheerio       Gemini
-(busca)  (download)  (parse)    (análise)
-         ↓
-Bulk Write → ProcessogramData + ProcessogramQuestion
+    ┌────┴────┬──────────────┬──────────────────────────┐
+    ↓         ↓              ↓                          ↓
+MongoDB   GCS          SvgParser               Gemini × 2
+(busca)  (download)  (Cheerio interno)   (descrições + perguntas)
+                          ↓
+               Bulk Write → ProcessogramData + ProcessogramQuestion
 ```
 
 ---
@@ -66,7 +66,7 @@ Armazena perguntas de quiz por elemento.
 ```
 
 **Índices**:
-- `{processogramId, elementId}` → Permite múltiplas perguntas por elemento
+- `{processogramId, elementId}` → Compound index (1 pergunta por elemento garantida pelo upsert)
 
 ---
 
@@ -82,47 +82,63 @@ Armazena perguntas de quiz por elemento.
 GEMINI_API_KEY=your-api-key
 ```
 
-#### Método principal
+#### Métodos de Análise
+
+O serviço faz **duas chamadas separadas** ao Gemini — uma para descrições e outra para perguntas:
+
+**1. `generateBulkAnalysis(elements)`** — Gera descrições
 
 ```typescript
-async generateBulkAnalysis(
-  context: string,
-  elementIds: string[]
-): Promise<BulkAnalysisResult>
+async generateBulkAnalysis(elements: ElementInput[]): Promise<BulkAnalysisResult>
 ```
 
-**Configuração do modelo**:
-- **Modelo**: `gemini-1.5-flash`
-- **Response MIME**: `application/json` (retorno estruturado)
-- **Temperature**: `0.4` (equilíbrio criatividade/consistência)
+- **Modelo**: `gemini-2.5-flash`
+- **Response MIME**: `application/json`
+- **Temperature**: `0.4`
+- **Prompt**: `DESCRIPTION_SYSTEM_PROMPT` (especialista em ciência animal)
+- **Input**: `elementId`, `level`, `name`, `parents`
+- **Output**: descrição de 3-6 frases por elemento
 
-**Prompt de sistema**:
-> Você é um especialista veterinário em bem-estar animal e sistemas de produção pecuária.
+**2. `generateBulkQuestions(elementsWithDescriptions)`** — Gera perguntas
 
-**Contexto enviado**:
-```
-Processograma: "Conventional Cages"
-Espécie: Aves
-Módulo de Produção: Hatchery
-Identificador: aves-hatchery-conventional-cages
-Total de elementos interativos: 310
-IDs dos elementos: conventional_cages--ps, laying_hen--lf, ...
+```typescript
+async generateBulkQuestions(
+  elementsWithDescriptions: { elementId: string; level: string; name: string; parents: string; description: string }[]
+): Promise<BulkQuestionsResult>
 ```
 
-**Formato de resposta**:
+- **Modelo**: `gemini-2.5-flash`
+- **Response MIME**: `application/json`
+- **Temperature**: `0.5`
+- **Prompt**: `QUESTIONS_SYSTEM_PROMPT` (professor universitário, múltipla escolha)
+- **Input**: todos os campos + `description` (gerada na etapa 1)
+- **Output**: exatamente **1 pergunta** por elemento (4 opções, `correctAnswerIndex` 0-based)
+
+> **Pipeline sequencial**: O `ProcessogramProcessor` primeiro chama `generateBulkAnalysis`
+> para obter as descrições, depois alimenta essas descrições ao `generateBulkQuestions`.
+> As perguntas dependem das descrições para serem contextualizadas.
+
+**Formato de resposta — Descrições**:
 ```json
 {
   "elements": [
     {
       "elementId": "laying_hen--lf",
-      "description": "Fase do ciclo produtivo onde...",
-      "questions": [
-        {
-          "question": "Qual a densidade populacional ideal?",
-          "options": ["300 cm²/ave", "450 cm²/ave", "600 cm²/ave", "750 cm²/ave"],
-          "correctAnswerIndex": 2
-        }
-      ]
+      "description": "Fase do ciclo produtivo onde..."
+    }
+  ]
+}
+```
+
+**Formato de resposta — Perguntas**:
+```json
+{
+  "questions": [
+    {
+      "elementId": "laying_hen--lf",
+      "question": "What is the ideal stocking density?",
+      "options": ["300 cm²/bird", "450 cm²/bird", "600 cm²/bird", "750 cm²/bird"],
+      "correctAnswerIndex": 2
     }
   ]
 }
@@ -133,6 +149,8 @@ IDs dos elementos: conventional_cages--ps, laying_hen--lf, ...
 ## 3. Use Case: `AnalyzeProcessogramUseCase`
 
 **Localização**: `src/application/useCases/processogram/AnalyzeProcessogramUseCase.ts`
+
+O UseCase busca o processograma, faz download do SVG e delega o processamento para o `ProcessogramProcessor` (`src/application/services/ProcessogramProcessor.ts`).
 
 ### Fluxo de Execução
 
@@ -160,46 +178,38 @@ const svgContent = await storage.downloadAsText(processogram.svg_url_light);
 
 Usa o método `downloadAsText()` do `GoogleStorageService` (extrai path da URL → download → UTF-8).
 
-**4. Extração de IDs com Cheerio**
-```typescript
-const $ = cheerio.load(svgContent, { xml: true });
-const elementIds: string[] = [];
+**4. Extração de Elementos com `SvgParser`**
 
-$('[id]').each((_, el) => {
-  const id = $(el).attr('id');
-  if (id && isAnalyzableId(id)) {  // Prefixos: --ps, --lf, --ph, --ci
-    elementIds.push(id);
-  }
-});
+O `SvgParser` (`src/domain/services/SvgParser.ts`) usa Cheerio internamente para extrair todos os IDs semânticos e construir a hierarquia:
+
+```typescript
+const svgParser = new SvgParser();
+const elements: ParsedElement[] = svgParser.parse(svgContent);
+// Retorna: { elementId, level, name, parents }[]
 ```
 
-**Prefixos rasterizáveis**:
-| Prefixo | Significado |
-|---------|-------------|
-| `--ps` | Processo/etapa |
-| `--lf` | Fluxo lógico |
-| `--ph` | Fase |
-| `--ci` | Indicador crítico |
+O parser identifica IDs que terminam com os sufixos semânticos (`--ps`, `--lf`, `--ph`, `--ci`) e resolve a hierarquia de pais percorrendo o DOM SVG para cima.
 
-**5. Montar Contexto**
-```typescript
-const context = [
-  `Processograma: "${processogram.name}"`,
-  `Espécie: ${specie?.name}`,
-  `Módulo de Produção: ${module?.name}`,
-  `Identificador: ${processogram.identifier}`,
-  `Total de elementos interativos: ${elementIds.length}`,
-  `IDs dos elementos: ${elementIds.join(', ')}`
-].filter(Boolean).join('\n');
-```
+**Níveis semânticos**:
+| Sufixo | Nível |
+|--------|-------|
+| `--ps` | production system |
+| `--lf` | life-fate |
+| `--ph` | phase |
+| `--ci` | circumstance |
 
-**6. Chamar Gemini**
+**5. Chamar Gemini (Etapa 1 — Descrições)**
+
+Os `ParsedElement[]` são enviados diretamente ao `generateBulkAnalysis`:
+
 ```typescript
 const gemini = getGeminiService();
-const analysis = await gemini.generateBulkAnalysis(context, elementIds);
+const analysis = await gemini.generateBulkAnalysis(elements);
 ```
 
-**7. Bulk Upsert de Descrições**
+O prompt (`DESCRIPTION_SYSTEM_PROMPT`) recebe `elementId`, `level`, `name`, `parents` e gera uma descrição de 3-6 frases por elemento.
+
+**6. Bulk Upsert de Descrições**
 ```typescript
 const dataOps = analysis.elements.map(el => ({
   updateOne: {
@@ -215,32 +225,62 @@ const dataOps = analysis.elements.map(el => ({
 await ProcessogramDataModel.bulkWrite(dataOps);
 ```
 
-**8. Bulk Replace de Perguntas**
+**7. Chamar Gemini (Etapa 2 — Perguntas)**
+
+Alimenta as descrições geradas na etapa anterior como contexto:
 ```typescript
-const questionOps = [];
-for (const el of analysis.elements) {
-  questionOps.push({
-    deleteMany: { filter: { processogramId, elementId: el.elementId } }
-  });
-  for (const q of el.questions) {
-    questionOps.push({
-      insertOne: { document: { processogramId, elementId: el.elementId, ...q } }
-    });
-  }
-}
+const elementsWithDescriptions = elements
+  .filter(el => descriptionsMap.has(el.elementId))
+  .map(el => ({
+    elementId: el.elementId,
+    level: el.level,
+    name: el.name,
+    parents: el.parents,
+    description: descriptionsMap.get(el.elementId)!,
+  }));
+
+const questionsResult = await gemini.generateBulkQuestions(elementsWithDescriptions);
+```
+
+**8. Bulk Upsert de Perguntas (1 por elemento)**
+```typescript
+const questionOps = questionsResult.questions
+  .filter(q => q.options?.length === 4 && typeof q.correctAnswerIndex === 'number')
+  .map(q => ({
+    updateOne: {
+      filter: { processogramId, elementId: q.elementId },
+      update: {
+        $set: {
+          question: q.question,
+          options: q.options,
+          correctAnswerIndex: q.correctAnswerIndex,
+          updatedAt: new Date(),
+        },
+        $setOnInsert: {
+          processogramId,
+          elementId: q.elementId,
+          createdAt: new Date(),
+        },
+      },
+      upsert: true,
+    },
+  }));
 
 await ProcessogramQuestionModel.bulkWrite(questionOps);
 ```
+
+> **Nota**: O prompt gera exatamente 1 pergunta por elemento. O `updateOne` com
+> `upsert: true` garante idempotência — re-análise sobrescreve a pergunta existente
+> sem criar duplicatas.
 
 **9. Retornar Resumo**
 ```typescript
 {
   processogramId,
-  message: "Analysis complete: 310 elements processed",
   elementsFound: 310,
-  elementsAnalyzed: 310,
   descriptionsUpserted: 310,
-  questionsUpserted: 930  // 310 elementos × 3 perguntas
+  questionsUpserted: 310,  // 1 pergunta por elemento
+  errors: [],
 }
 ```
 
@@ -261,11 +301,10 @@ await ProcessogramQuestionModel.bulkWrite(questionOps);
 ```json
 {
   "processogramId": "698bdcf03d60b37e230bc9e9",
-  "message": "Analysis complete: 310 elements processed",
   "elementsFound": 310,
-  "elementsAnalyzed": 310,
   "descriptionsUpserted": 310,
-  "questionsUpserted": 930
+  "questionsUpserted": 310,
+  "errors": []
 }
 ```
 
@@ -289,7 +328,7 @@ await ProcessogramQuestionModel.bulkWrite(questionOps);
 echo "GEMINI_API_KEY=your-key-here" >> .env
 
 # 2. Login (admin)
-curl -i -X POST http://localhost:8080/auth/login \
+curl -i -X POST http://localhost:8080/api/v1/auth/login \
   -H "Content-Type: application/json" \
   -d '{"email":"admin@welfare.com","password":"password123"}' \
   -c cookies.txt
@@ -299,7 +338,7 @@ curl -i -X POST http://localhost:8080/auth/login \
 
 ```bash
 # Disparar análise
-curl -X POST http://localhost:8080/processograms/698bdcf03d60b37e230bc9e9/analyze \
+curl -X POST http://localhost:8080/api/v1/processograms/698bdcf03d60b37e230bc9e9/analyze \
   -b cookies.txt
 ```
 
@@ -308,23 +347,28 @@ curl -X POST http://localhost:8080/processograms/698bdcf03d60b37e230bc9e9/analyz
 ```json
 {
   "processogramId": "698bdcf03d60b37e230bc9e9",
-  "message": "Analysis complete: 310 elements processed",
   "elementsFound": 310,
-  "elementsAnalyzed": 310,
   "descriptionsUpserted": 310,
-  "questionsUpserted": 930
+  "questionsUpserted": 310,
+  "errors": []
 }
 ```
 
 ### Consultar resultados
 
 ```bash
-# Ver descrições de um elemento específico
-curl "http://localhost:8080/processogram-data?processogramId=698bdcf03d60b37e230bc9e9&elementId=laying_hen--lf" \
+# Ver descrições (rota pública)
+curl "http://localhost:8080/api/v1/processograms/698bdcf03d60b37e230bc9e9/data/public"
+
+# Ver descrições (rota autenticada, mesmos dados)
+curl "http://localhost:8080/api/v1/processograms/698bdcf03d60b37e230bc9e9/data" \
   -b cookies.txt
 
-# Ver perguntas de quiz
-curl "http://localhost:8080/processogram-questions?processogramId=698bdcf03d60b37e230bc9e9&elementId=laying_hen--lf" \
+# Ver perguntas de quiz (rota pública)
+curl "http://localhost:8080/api/v1/processograms/698bdcf03d60b37e230bc9e9/questions/public"
+
+# Ver perguntas (rota autenticada)
+curl "http://localhost:8080/api/v1/processograms/698bdcf03d60b37e230bc9e9/questions" \
   -b cookies.txt
 ```
 
@@ -336,7 +380,7 @@ curl "http://localhost:8080/processogram-questions?processogramId=698bdcf03d60b3
 
 A análise pode ser executada múltiplas vezes no mesmo processograma:
 - **Descrições**: Upsert preserva `createdAt` original, atualiza `description` e `updatedAt`
-- **Perguntas**: Delete + Insert — substitui completamente as perguntas antigas
+- **Perguntas**: Upsert por `{processogramId, elementId}` — sobrescreve a pergunta existente, preserva `createdAt`
 
 ### Performance
 
@@ -348,20 +392,20 @@ A análise pode ser executada múltiplas vezes no mesmo processograma:
 
 Gargalos:
 1. Download do SVG do GCS
-2. Parsing com Cheerio (negligível)
-3. **Gemini API call** (maior latência)
+2. Parsing com SvgParser (negligível)
+3. **Gemini API call × 2** (descrições + perguntas — maior latência)
 4. Bulk write no MongoDB
 
 ### Custos Gemini
 
-**Gemini 1.5 Flash** (preços referência):
-- **Input**: ~$0.075 / 1M tokens
-- **Output**: ~$0.30 / 1M tokens
+**Gemini 2.5 Flash** (preços referência):
+- **Input**: ~$0.15 / 1M tokens
+- **Output**: ~$0.60 / 1M tokens
 
-Exemplo para 310 elementos:
-- Input: ~5k tokens (contexto + IDs)
-- Output: ~50k tokens (descrições + perguntas)
-- **Custo total**: ~$0.02 por análise
+Exemplo para 310 elementos (2 chamadas):
+- Input: ~5k + ~25k tokens (contexto + IDs + descrições)
+- Output: ~50k + ~15k tokens (descrições + perguntas)
+- **Custo total**: ~$0.04 por análise
 
 ---
 
@@ -372,7 +416,8 @@ Exemplo para 310 elementos:
 1. **Análise sequencial**: Processa todos os elementos de uma vez (pode travar em SVGs com 1000+ IDs)
 2. **Sem cache**: Re-análise completa a cada execução
 3. **Sem versionamento**: Sobrescreve dados antigos sem histórico
-4. **Idioma fixo**: Prompt em português brasileiro
+4. **Idioma fixo**: Prompts em inglês (output em inglês)
+5. **1 pergunta por elemento**: O prompt gera exatamente 1 question por element. Para mais perguntas, é preciso alterar o prompt + schema.
 
 ### Roadmap
 
@@ -380,9 +425,9 @@ Exemplo para 310 elementos:
 - Dividir análise em lotes de 50 elementos
 - Progress tracking com WebSockets
 
-**v1.2 - Human-in-the-Loop**
-- Endpoint `PATCH /processogram-data/:id` para edição manual
-- Flag `isManuallyEdited` para preservar edições na re-análise
+**v1.2 - Human-in-the-Loop** ✅ (implementado)
+- Endpoints `GET` + `PUT` para edição manual de descrições e questões
+- Rotas públicas para consumo pelo frontend (`/data/public`, `/questions/public`)
 
 **v1.3 - Multi-idioma**
 - Detectar idioma do frontend
@@ -427,12 +472,13 @@ app.use((req, res, next) => {
 
 **Sintoma**: `elementsFound: 0`
 
-**Causa**: SVG não tem IDs com prefixos `--ps`, `--lf`, `--ph`, `--ci`
+**Causa**: SVG não tem IDs com sufixos semânticos (`--ps`, `--lf`, `--ph`, `--ci`)
 
 **Solução**:
 1. Validar SVG antes do upload
-2. Adicionar prefixos aos IDs no editor (Inkscape/Figma)
-3. Ajustar `RASTERIZABLE_PREFIXES` no código se necessário
+2. Adicionar sufixos aos IDs no editor (Inkscape/Figma)
+3. Ajustar `ANALYZABLE_PATTERN` no `SvgParser.ts` se necessário
+4. Rodar o `normalizeSemanticIdsPlugin` (SVGO) se os IDs usam `_` em vez de `--`
 
 ---
 

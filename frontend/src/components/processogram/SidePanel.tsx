@@ -46,7 +46,6 @@ export function SidePanel({
   processogramId,
   selectedElementId,
   onClose,
-  /* Navigation props — wired for future Breadcrumb / Questions UI */
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   activeElementData,
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -56,44 +55,67 @@ export function SidePanel({
 }: SidePanelProps) {
   const [elementData, setElementData] = useState<ElementData | null>(null);
   const [loadingData, setLoadingData] = useState(false);
+  const [suggestedQuestions, setSuggestedQuestions] = useState<string[]>([]);
+  const [dataForElement, setDataForElement] = useState<string | null>(null);
+
+  // Reset quando o elemento muda (derivação síncrona, sem effect)
+  if (dataForElement !== selectedElementId) {
+    setDataForElement(selectedElementId);
+    setElementData(null);
+    setSuggestedQuestions([]);
+  }
 
   useEffect(() => {
-    if (!selectedElementId) {
-      setElementData(null);
-      return;
-    }
+    if (!selectedElementId) return;
 
     const controller = new AbortController();
+    let cancelled = false;
 
-    async function fetchElementData() {
+    async function fetchPanelData() {
       setLoadingData(true);
-      setElementData(null);
-      try {
-        const res = await fetch(
-          `/api/v1/processograms/${processogramId}/data/public`,
-          {
-            credentials: "include",
-            signal: controller.signal,
-          }
-        );
-        if (!res.ok) {
-          setLoadingData(false);
-          return;
-        }
-        const items: ElementData[] = await res.json();
-        const match = items.find(
-          (d) => d.elementId === selectedElementId
-        );
-        setElementData(match ?? null);
-      } catch {
-        /* abort or network error */
-      } finally {
-        setLoadingData(false);
+
+      const [dataResult, questionsResult] = await Promise.allSettled([
+        fetch(`/api/v1/processograms/${processogramId}/data/public`, {
+          credentials: "include",
+          signal: controller.signal,
+        }),
+        fetch(`/api/v1/processograms/${processogramId}/questions/public`, {
+          credentials: "include",
+          signal: controller.signal,
+        }),
+      ]);
+
+      if (cancelled) return;
+
+      // Descriptions
+      if (dataResult.status === "fulfilled" && dataResult.value.ok) {
+        try {
+          const items: ElementData[] = await dataResult.value.json();
+          const match = items.find((d) => d.elementId === selectedElementId);
+          setElementData(match ?? null);
+        } catch { /* parse error */ }
       }
+
+      // Questions
+      if (questionsResult.status === "fulfilled" && questionsResult.value.ok) {
+        try {
+          const allQuestions: { elementId: string; question: string }[] =
+            await questionsResult.value.json();
+          const matching = allQuestions
+            .filter((q) => q.elementId === selectedElementId)
+            .map((q) => q.question);
+          setSuggestedQuestions(matching);
+        } catch { /* parse error */ }
+      }
+
+      setLoadingData(false);
     }
 
-    fetchElementData();
-    return () => controller.abort();
+    fetchPanelData();
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
   }, [processogramId, selectedElementId]);
 
   return (
@@ -170,6 +192,7 @@ export function SidePanel({
             <ChatWidget
               processogramId={processogramId}
               elementContext={selectedElementId}
+              suggestedQuestions={suggestedQuestions}
             />
           </div>
         </motion.aside>

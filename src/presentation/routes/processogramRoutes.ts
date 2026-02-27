@@ -17,6 +17,7 @@ router.get('/', AuthMiddleware, ProcessogramController.list);
 router.get('/:id', ProcessogramController.show);
 router.get('/:id/svg', ProcessogramController.svg);
 router.get('/:processogramId/data/public', ProcessogramDataController.listByProcessogram);
+router.get('/:processogramId/questions/public', ProcessogramQuestionController.listByProcessogram);
 router.post('/:processogramId/chat/stream', ChatController.stream);
 
 router.post(

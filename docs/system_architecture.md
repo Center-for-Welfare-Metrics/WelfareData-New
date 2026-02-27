@@ -203,8 +203,9 @@ src/presentation/
 - **SDK:** `@google/generative-ai` 0.24+
 - **Modelos:**
   - `gemini-2.5-flash` — análise bulk de elementos (descrições técnicas), temperature 0.4, JSON mode
+  - `gemini-2.5-flash` — geração de perguntas de quiz (1 por elemento), temperature 0.5, JSON mode
   - `gemini-2.5-flash` — chat contextual com streaming, temperature 0.3, system instruction com RAG
-- **Uso:** Geração de descrições científicas de elementos de processogramas e chat interativo
+- **Uso:** Geração de descrições científicas e perguntas de quiz para elementos de processogramas, e chat interativo
 
 ### Puppeteer
 

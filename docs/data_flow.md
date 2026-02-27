@@ -165,8 +165,10 @@ Registros `ProcessogramData` no MongoDB: um por elemento, com `processogramId`, 
 ## Passo 4: Persistência & Human-in-the-Loop
 
 **Rotas de leitura:**
-- `GET /processograms/:processogramId/data` — lista descrições
-- `GET /processograms/:processogramId/questions` — lista questões
+- `GET /processograms/:processogramId/data` — lista descrições (auth)
+- `GET /processograms/:processogramId/data/public` — lista descrições (pública)
+- `GET /processograms/:processogramId/questions` — lista questões (auth)
+- `GET /processograms/:processogramId/questions/public` — lista questões (pública, usada pelo SidePanel)
 
 **Rotas de edição (admin):**
 - `PUT /processogram-data/:id` — edita descrição/videoUrl
@@ -186,17 +188,17 @@ ProcessogramQuestion
 ├── processogramId (ref → Processogram)
 ├── elementId (string, indexed)
 ├── question (string)
-├── options ([string])
-├── correctAnswerIndex (number)
-└── Compound index: {processogramId, elementId} (não unique)
+├── options ([string], exactly 4)
+├── correctAnswerIndex (number, 0-3)
+└── Compound index: {processogramId, elementId} (1 pergunta por elemento via upsert)
 ```
 
 ### Fluxo Human-in-the-Loop
 
-1. IA gera descrições brutas (Passo 3)
-2. Administrador revisa via `GET .../data`
-3. Administrador corrige via `PUT /processogram-data/:id`
-4. Descrições validadas ficam disponíveis para o Chat (Passo 5)
+1. IA gera descrições + perguntas (Passo 3, 2 chamadas Gemini)
+2. Administrador revisa via `GET .../data` e `GET .../questions`
+3. Administrador corrige via `PUT /processogram-data/:id` ou `PUT /processogram-questions/:id`
+4. Dados validados ficam disponíveis para o Chat (Passo 5) e SidePanel (chips)
 
 ---
 

@@ -10,6 +10,7 @@ import {
 import { motion, AnimatePresence } from "framer-motion";
 import { Send, Loader2, Bot, User, AlertCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { SuggestedQuestions } from "./SuggestedQuestions";
 
 interface ChatMessage {
   role: "user" | "model";
@@ -19,6 +20,7 @@ interface ChatMessage {
 interface ChatWidgetProps {
   processogramId: string;
   elementContext?: string;
+  suggestedQuestions?: string[];
 }
 
 async function streamChat(
@@ -75,7 +77,7 @@ async function streamChat(
   }
 }
 
-export function ChatWidget({ processogramId, elementContext }: ChatWidgetProps) {
+export function ChatWidget({ processogramId, elementContext, suggestedQuestions = [] }: ChatWidgetProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
@@ -99,10 +101,9 @@ export function ChatWidget({ processogramId, elementContext }: ChatWidgetProps) 
     return () => abortRef.current?.abort();
   }, []);
 
-  const handleSubmit = useCallback(
-    async (e: FormEvent) => {
-      e.preventDefault();
-      const trimmed = input.trim();
+  const sendMessage = useCallback(
+    async (text: string) => {
+      const trimmed = text.trim();
       if (!trimmed || isStreaming) return;
 
       setError(null);
@@ -161,7 +162,15 @@ export function ChatWidget({ processogramId, elementContext }: ChatWidgetProps) 
         abortRef.current = null;
       }
     },
-    [input, isStreaming, messages, processogramId, elementContext]
+    [isStreaming, messages, processogramId, elementContext]
+  );
+
+  const handleSubmit = useCallback(
+    (e: FormEvent) => {
+      e.preventDefault();
+      sendMessage(input);
+    },
+    [input, sendMessage]
   );
 
   return (
@@ -239,6 +248,12 @@ export function ChatWidget({ processogramId, elementContext }: ChatWidgetProps) 
           </motion.div>
         )}
       </div>
+
+      <SuggestedQuestions
+        questions={suggestedQuestions}
+        onQuestionClick={sendMessage}
+        disabled={isStreaming}
+      />
 
       <form
         onSubmit={handleSubmit}

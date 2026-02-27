@@ -2,7 +2,7 @@
 
 ## Visão Geral
 
-Endpoint de chat que permite aos usuários interagir com os dados técnicos do processograma usando IA generativa. Utiliza RAG simplificado: as descrições validadas (`ProcessogramData`) são injetadas como contexto para o modelo Gemini 1.5 Flash, que responde via Server-Sent Events (SSE).
+Endpoint de chat que permite aos usuários interagir com os dados técnicos do processograma usando IA generativa. Utiliza RAG simplificado: as descrições validadas (`ProcessogramData`) são injetadas como contexto para o modelo Gemini 2.5 Flash, que responde via Server-Sent Events (SSE).
 
 ---
 
@@ -115,7 +115,7 @@ data: [DONE]
 
 | Parâmetro | Valor | Justificativa |
 |-----------|-------|---------------|
-| Model | `gemini-1.5-flash` | Otimizado para streaming e baixa latência |
+| Model | `gemini-2.5-flash` | Otimizado para streaming e baixa latência |
 | Temperature | `0.3` | Foco em respostas factuais e precisas |
 | System Instruction | Contexto RAG | Descrições do processograma injetadas |
 

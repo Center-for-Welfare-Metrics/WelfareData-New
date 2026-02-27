@@ -17,7 +17,6 @@ import { processogramService } from "@/services/processograms";
 import type {
   Processogram,
   ProcessogramElement,
-  ProcessogramQuestion,
   BreadcrumbItem,
   ActiveElementData,
 } from "@/types/processogram";
@@ -54,7 +53,6 @@ export default function PublicViewPage() {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const [state, setState] = useState<ViewState>({ status: "loading" });
   const [elements, setElements] = useState<ProcessogramElement[]>([]);
-  const [questions, setQuestions] = useState<ProcessogramQuestion[]>([]);
 
   // ─── Estado derivado do navigator (System B) ─────────────────────────
 
@@ -97,9 +95,6 @@ export default function PublicViewPage() {
         const matchingElement = elements.find(
           (e) => e.elementId === lastItem.rawId,
         );
-        const matchingQuestions = questions.filter(
-          (q) => q.elementId === lastItem.rawId,
-        );
 
         setActiveElementData({
           elementId: lastItem.rawId,
@@ -107,11 +102,11 @@ export default function PublicViewPage() {
           label: lastItem.name,
           description: matchingElement?.description ?? "",
           parents: crumbs.slice(0, -1),
-          questions: matchingQuestions,
+          questions: [],
         });
       }
     },
-    [elements, questions],
+    [elements],
   );
 
   /**
@@ -175,11 +170,6 @@ export default function PublicViewPage() {
         processogramService
           .getElementData(params.id!)
           .then(setElements)
-          .catch(() => {});
-
-        processogramService
-          .getQuestions(params.id!)
-          .then(setQuestions)
           .catch(() => {});
       } catch (err: unknown) {
         if ((err as Error).name === "CanceledError") return;
