@@ -104,7 +104,7 @@ changeLevelTo(target, toPrevious)
        │
        ▼
   1. getElementViewBox(target)
-     └─ getBBox() → compensação ratio → padding → "x y w h"
+     └─ getBBox() → zoom floor → padding → trava AR → clamping → "x y w h"
        │
        ▼
   2. Salvar no histórico

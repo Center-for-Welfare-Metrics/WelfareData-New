@@ -26,6 +26,7 @@ Adotar o **Google Gemini** (via SDK `@google/generative-ai`) como provider exclu
 | Função | Modelo | Justificativa |
 |--------|--------|---------------|
 | Análise Bulk (descrições) | `gemini-2.5-flash` | Alta capacidade de raciocínio, JSON mode nativo, temperature 0.4 para balanço entre criatividade e precisão |
+| Análise Bulk (perguntas) | `gemini-2.5-flash` | Gera 1 pergunta de quiz por elemento, temperature 0.5, depende das descrições geradas na etapa anterior |
 | Chat Streaming | `gemini-2.5-flash` | Otimizado para latência, streaming nativo via SDK, temperature 0.3 para foco factual |
 
 ---

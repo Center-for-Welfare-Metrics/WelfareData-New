@@ -102,7 +102,7 @@ export class GeminiService {
 
   async streamChat(context: string, userMessage: string, history: ChatMessage[]) {
     const model = this.genAI.getGenerativeModel({
-      model: 'gemini-2.5-flash',
+      model: this.modelName,
       generationConfig: { temperature: 0.3 },
       systemInstruction: context,
     });

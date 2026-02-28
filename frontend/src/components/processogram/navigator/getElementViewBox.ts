@@ -6,18 +6,22 @@
  * O browser é um motor de câmera embutido: alterar o atributo `viewBox`
  * de um `<svg>` faz o browser recalcular toda a projeção automaticamente.
  * Este módulo calcula a string `viewBox` ideal para enquadrar qualquer
- * elemento SVG na viewport, com compensação de aspect ratio e padding
- * adaptativo.
+ * elemento SVG na viewport, com zoom floor, padding adaptativo e
+ * trava de aspect ratio.
  *
- * Fluxo:
- *   1. `getBBox()` do elemento → coordenadas no espaço SVG
- *   2. Compensação de aspect ratio (tela vs. elemento)
- *   3. Padding adaptativo baseado no tamanho relativo
- *   4. Retorna `"x y width height"` — a string que o GSAP interpolará
+ * Pipeline:
+ *   1. `getBBox()` do elemento + SVG pai
+ *   2. Zoom Floor — tamanho mínimo absoluto (5% do SVG)
+ *   3. Padding adaptativo — respiro visual (15–25%)
+ *   4. Trava de Aspect Ratio — casa viewBox com a tela (bidirecional)
+ *   5. Clamping — mantém dentro dos limites do SVG
+ *   6. Retorna `"x y width height"` — a string que o GSAP interpolará
  *
  * Referência: GUIA_REPLICACAO_SVG_NAVIGATOR.md §5
  * ═══════════════════════════════════════════════════════════════════════
  */
+
+import { ZOOM_FLOOR_RATIO } from "./consts";
 
 // ─── Helpers Internos ──────────────────────────────────────────────────
 
@@ -56,16 +60,15 @@ function getSvgParent(el: Element): SVGSVGElement {
  * de mais espaço ao redor para não ficarem visualmente "colados"
  * nas bordas da viewport.
  *
- * @param element - Elemento SVG cujo tamanho relativo será calculado.
+ * @param elBBox    - BBox do elemento alvo (já extraída pelo caller).
+ * @param parentBBox - BBox do SVG raiz (já extraída pelo caller).
  * @returns Porcentagem de ocupação (0–100).
  */
-function getPercentageSize(element: Element): number {
-  const svgParent = getSvgParent(element);
-
-  const svgBBox = (svgParent as unknown as SVGGraphicsElement).getBBox();
-  const elBBox = (element as unknown as SVGGraphicsElement).getBBox();
-
-  const svgArea = svgBBox.width * svgBBox.height;
+function getPercentageSize(
+  elBBox: DOMRect,
+  parentBBox: DOMRect,
+): number {
+  const svgArea = parentBBox.width * parentBBox.height;
   const elArea = elBBox.width * elBBox.height;
 
   // Protege contra divisão por zero (SVG vazio ou sem dimensões)
@@ -78,21 +81,65 @@ function getPercentageSize(element: Element): number {
  * Retorna o multiplicador de padding com base no tamanho relativo
  * do elemento no SVG.
  *
- * Limiares (conforme o guia de replicação):
+ * Limiares (pós Zoom Floor — o floor garante o tamanho mínimo,
+ * o padding agora é apenas "respiro visual"):
  *
  * | Tamanho relativo          | Padding | Racional                          |
  * |---------------------------|---------|-----------------------------------|
  * | Grande (> 40% da área)    | 0       | Já ocupa quase tudo — sem respiro |
- * | Médio (0.5% a 40%)        | 0.2     | 20% de margem — confortável       |
- * | Minúsculo (< 0.5%)       | 1.5     | 150% — zoom-out generoso          |
+ * | Médio (0.5% a 40%)        | 0.15    | 15% de margem — confortável       |
+ * | Minúsculo (≤ 0.5%)        | 0.25    | 25% — respiro sobre o Zoom Floor  |
+ *
+ * Nota: o antigo valor de 1.5 (150%) para micro-elementos era uma
+ * muleta para compensar a ausência de Zoom Floor. Com o floor ativo
+ * (Etapa 2), basta um padding moderado de 25%.
  *
  * @param percentageSize - Tamanho relativo do elemento (0–100).
- * @returns Multiplicador de padding (0, 0.2 ou 1.5).
+ * @returns Multiplicador de padding (0, 0.15 ou 0.25).
  */
 function getAdaptivePadding(percentageSize: number): number {
-  if (percentageSize < 40 && percentageSize > 0.5) return 0.2;
-  if (percentageSize <= 0.5) return 1.5;
-  return 0;
+  if (percentageSize > 40) return 0;
+  if (percentageSize > 0.5) return 0.15;
+  return 0.25;
+}
+
+/**
+ * Restringe o viewBox aos limites do SVG pai.
+ *
+ * O Zoom Floor e a Trava de AR podem empurrar o viewBox para fora
+ * dos limites do SVG (ex: elemento no canto + expansão simétrica).
+ * Este helper garante que:
+ *   - width/height não excedam o SVG pai
+ *   - x/y não fiquem antes da origem nem além do limite oposto
+ *
+ * @param vx - x do viewBox
+ * @param vy - y do viewBox
+ * @param vw - width do viewBox
+ * @param vh - height do viewBox
+ * @param p  - BBox do SVG pai (limites absolutos)
+ * @returns Tupla [x, y, width, height] clampada.
+ */
+function clampViewBox(
+  vx: number,
+  vy: number,
+  vw: number,
+  vh: number,
+  p: DOMRect,
+): [number, number, number, number] {
+  // Não pode ser maior que o SVG inteiro
+  const w = Math.min(vw, p.width);
+  const h = Math.min(vh, p.height);
+
+  // Não pode sair dos limites
+  const xMin = p.x;
+  const xMax = p.x + p.width - w;
+  const yMin = p.y;
+  const yMax = p.y + p.height - h;
+
+  const x = Math.max(xMin, Math.min(vx, xMax));
+  const y = Math.max(yMin, Math.min(vy, yMax));
+
+  return [x, y, w, h];
 }
 
 // ─── Função Principal ──────────────────────────────────────────────────
@@ -100,14 +147,13 @@ function getAdaptivePadding(percentageSize: number): number {
 /**
  * Calcula o `viewBox` ideal para enquadrar um elemento SVG na viewport.
  *
- * Algoritmo:
- *   1. Extrai as coordenadas nativas do elemento via `getBBox()`
- *   2. Compensa a divergência de aspect ratio entre a viewport
- *      do browser e o bounding box do elemento (evita distorção)
- *   3. Aplica padding adaptativo — elementos menores recebem mais
- *      "respiro" proporcional
- *   4. Retorna a string `"x y width height"` pronta para ser
- *      atribuída ao atributo `viewBox` do `<svg>`
+ * Pipeline:
+ *   1. BBox do elemento + SVG pai via `getBBox()`
+ *   2. Zoom Floor — tamanho mínimo absoluto (5% do SVG)
+ *   3. Padding adaptativo — respiro visual (15–25%)
+ *   4. Trava de Aspect Ratio — casa viewBox com a tela (bidirecional)
+ *   5. Clamping — mantém dentro dos limites do SVG
+ *   6. Retorna `"x y width height"` — string que o GSAP interpolará
  *
  * @param element - O elemento SVG a enquadrar (qualquer `<g>`, `<path>`, etc.).
  * @returns String `viewBox` formatada, ou `null` se o cálculo falhar.
@@ -125,13 +171,12 @@ function getAdaptivePadding(percentageSize: number): number {
 export function getElementViewBox(element: Element): string | null {
   try {
     // ═══════════════════════════════════════════════
-    // 1. BOUNDING BOX NATIVA
+    // 1. BOUNDING BOXES (elemento + SVG pai)
     // ═══════════════════════════════════════════════
     // getBBox() retorna coordenadas no sistema de coordenadas
     // do espaço SVG (não pixels de tela).
-    let { x, y, width, height } = (
-      element as unknown as SVGGraphicsElement
-    ).getBBox();
+    const elBBox = (element as unknown as SVGGraphicsElement).getBBox();
+    let { x, y, width, height } = elBBox;
 
     // Proteção: BBox sem dimensões → impossível calcular viewBox
     if (width === 0 || height === 0) {
@@ -142,31 +187,39 @@ export function getElementViewBox(element: Element): string | null {
       return null;
     }
 
+    // BBox do SVG raiz — base para Zoom Floor, padding e clamping
+    const svgParent = getSvgParent(element);
+    const parentBBox = (
+      svgParent as unknown as SVGGraphicsElement
+    ).getBBox();
+
     // ═══════════════════════════════════════════════
-    // 2. COMPENSAÇÃO DE ASPECT RATIO
+    // 2. ZOOM FLOOR (tamanho mínimo absoluto de câmera)
     // ═══════════════════════════════════════════════
-    // Se a tela é landscape mas o elemento é portrait (ou vice-versa),
-    // o viewBox resultante distorceria a projeção. Compensamos
-    // alargando o viewBox horizontalmente.
+    // Em SVGs massivos, um CI pode ocupar 0.003% da área total.
+    // Aplicar padding proporcional sobre dimensões minúsculas
+    // resulta em viewBoxes ainda minúsculas (sem contexto visual).
     //
-    //   screenRatio  = innerHeight / innerWidth  → <1 se landscape
-    //   elementRatio = height / width            → >=1 se vertical
-    //   ratioDiff    = divergência × 2 (fator de compensação)
+    // O Zoom Floor garante que a câmera NUNCA enquadre uma área
+    // menor que ZOOM_FLOOR_RATIO (5%) do SVG total em cada eixo.
+    // Se a BBox do elemento for menor que o floor, o viewBox é
+    // expandido simetricamente a partir do centro do elemento.
 
-    const screenRatio = window.innerHeight / window.innerWidth;
-    const elementRatio = height / width;
-    const ratioDiff = Math.abs(screenRatio - elementRatio) * 2;
+    const minWidth = parentBBox.width * ZOOM_FLOOR_RATIO;
+    const minHeight = parentBBox.height * ZOOM_FLOOR_RATIO;
 
-    const isScreenHorizontal = screenRatio < 1;
-    const isElementVertical = elementRatio >= 1;
+    // Centro do elemento original (ponto de ancoragem para expansão)
+    const centerX = elBBox.x + elBBox.width / 2;
+    const centerY = elBBox.y + elBBox.height / 2;
 
-    if (
-      (isScreenHorizontal && isElementVertical) ||
-      (!isScreenHorizontal && isElementVertical)
-    ) {
-      // Alarga horizontalmente para compensar a diferença
-      x -= (width * ratioDiff) / 2;
-      width += width * ratioDiff;
+    if (width < minWidth) {
+      x = centerX - minWidth / 2;
+      width = minWidth;
+    }
+
+    if (height < minHeight) {
+      y = centerY - minHeight / 2;
+      height = minHeight;
     }
 
     // ═══════════════════════════════════════════════
@@ -181,7 +234,7 @@ export function getElementViewBox(element: Element): string | null {
     //   - y recua em (height × padding) / 2
     //   - height cresce em height × padding
 
-    const percentageSize = getPercentageSize(element);
+    const percentageSize = getPercentageSize(elBBox, parentBBox);
     const padding = getAdaptivePadding(percentageSize);
 
     if (padding > 0) {
@@ -192,7 +245,46 @@ export function getElementViewBox(element: Element): string | null {
     }
 
     // ═══════════════════════════════════════════════
-    // 4. STRING FINAL
+    // 4. TRAVA DE ASPECT RATIO (bidirecional)
+    // ═══════════════════════════════════════════════
+    // Garante que o viewBox resultante tenha EXATAMENTE o mesmo
+    // aspect ratio da viewport do browser. Sem isso, elementos
+    // muito largos ou muito altos renderizam colados nas bordas.
+    //
+    // Fórmula:
+    //   Se viewBox é mais alto que a tela  → expande width
+    //   Se viewBox é mais largo que a tela → expande height
+    //
+    // A expansão é simétrica a partir do centro do viewBox atual,
+    // mantendo o elemento alvo no ponto focal.
+
+    const screenAR = window.innerWidth / window.innerHeight;
+    const viewBoxAR = width / height;
+
+    if (viewBoxAR < screenAR) {
+      // viewBox mais alto que a tela → expandir largura
+      const newWidth = height * screenAR;
+      x -= (newWidth - width) / 2;
+      width = newWidth;
+    } else if (viewBoxAR > screenAR) {
+      // viewBox mais largo que a tela → expandir altura
+      const newHeight = width / screenAR;
+      y -= (newHeight - height) / 2;
+      height = newHeight;
+    }
+
+    // ═══════════════════════════════════════════════
+    // 5. CLAMPING DE LIMITES
+    // ═══════════════════════════════════════════════
+    // Garante que o viewBox não saia dos limites do SVG pai.
+    // Necessário porque Zoom Floor, Padding e Trava de AR
+    // expandem simetricamente — podem ultrapassar as bordas
+    // quando o elemento está próximo de um canto.
+
+    [x, y, width, height] = clampViewBox(x, y, width, height, parentBBox);
+
+    // ═══════════════════════════════════════════════
+    // 6. STRING FINAL
     // ═══════════════════════════════════════════════
     return `${x} ${y} ${width} ${height}`;
   } catch (error) {

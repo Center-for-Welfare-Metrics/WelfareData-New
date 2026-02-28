@@ -19,6 +19,18 @@ export const ANIMATION_DURATION = 0.7;
 /** Curva de easing para a transição de viewBox. */
 export const ANIMATION_EASE = "power1.inOut" as const;
 
+// ─── Motor de Câmera (ViewBox) ─────────────────────────────────────────
+
+/**
+ * Tamanho mínimo da câmera como fração do SVG total.
+ *
+ * Impede zoom excessivo em micro-elementos: a largura e altura
+ * do viewBox NUNCA serão menores que `parentBBox * ZOOM_FLOOR_RATIO`.
+ *
+ * 0.05 = 5% do SVG total.
+ */
+export const ZOOM_FLOOR_RATIO = 0.05;
+
 // ─── Isolamento Visual (Focus / Mute) ──────────────────────────────────
 //
 // Utiliza exclusivamente `filter` CSS para preservar hue/saturation
