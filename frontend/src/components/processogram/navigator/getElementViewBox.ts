@@ -10,11 +10,12 @@
  * trava de aspect ratio.
  *
  * Pipeline:
- *   1. `getBBox()` do elemento + SVG pai
+ *   1. BBox TRANSFORMADA do elemento (coords VIEWBOX via CTM relativa)
+ *      + viewBox declarado do SVG pai
  *   2. Zoom Floor — tamanho mínimo absoluto (5% do SVG)
  *   3. Padding adaptativo — respiro visual (15–25%)
  *   4. Trava de Aspect Ratio — casa viewBox com a tela (bidirecional)
- *   5. Clamping — mantém dentro dos limites do SVG
+ *   5. Clamping — mantém dentro do viewBox declarado
  *   6. Retorna `"x y width height"` — a string que o GSAP interpolará
  *
  * Referência: GUIA_REPLICACAO_SVG_NAVIGATOR.md §5
@@ -24,6 +25,14 @@
 import { ZOOM_FLOOR_RATIO } from "./consts";
 
 // ─── Helpers Internos ──────────────────────────────────────────────────
+
+/** Subset mínimo de DOMRect/SVGRect usado pelos helpers internos. */
+interface Rect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
 
 /**
  * Sobe na árvore DOM até encontrar o `<svg>` pai.
@@ -53,6 +62,79 @@ function getSvgParent(el: Element): SVGSVGElement {
 }
 
 /**
+ * Calcula a BBox de um elemento em coordenadas do **viewBox** do SVG raiz,
+ * aplicando a cadeia de transforms dos ancestrais via CTM relativa.
+ *
+ * `getBBox()` sozinho retorna coordenadas **locais** — ignora
+ * `transform` de `<g>` ancestrais. Em SVGs complexos do Inkscape
+ * com camadas compostas (translate, matrix, scale), as coordenadas
+ * locais divergem drasticamente das coordenadas do viewBox.
+ *
+ * **Por que não usar `element.getCTM()` diretamente?**
+ * A spec SVG2 (§4.4.2) define que `getCTM()` retorna a matriz que
+ * transforma do espaço local para o **viewport** (pixels CSS), o que
+ * inclui o scaling viewBox→viewport. Se o SVG tem viewBox 574×274
+ * mas é renderizado a 1440×675px, `getCTM()` embute um fator ~2.5×.
+ *
+ * A solução é compor `svgParent.getCTM().inverse()` × `element.getCTM()`,
+ * cancelando o scaling do viewport e isolando **apenas** os transforms
+ * internos (translate, matrix, scale dos `<g>` ancestrais).
+ *
+ * O backend (`SvgProcessorService.ts` → `BBOX_EXTRACTION_SCRIPT`)
+ * usa `getCTM()` direto porque no Puppeteer viewport === viewBox
+ * (fator 1×), dispensando a compensação.
+ *
+ * @param element   - Elemento SVG alvo.
+ * @param svgParent - O `<svg>` raiz (para CTM inversa e createSVGPoint).
+ * @returns BBox em coordenadas do viewBox `{ x, y, width, height }`.
+ */
+function getTransformedBBox(
+  element: SVGGraphicsElement,
+  svgParent: SVGSVGElement,
+): { x: number; y: number; width: number; height: number } {
+  const bbox = element.getBBox();
+  const svgCTM = svgParent.getCTM();
+  const elCTM = element.getCTM();
+
+  // Sem CTM → fallback direto (elemento não está no DOM ou sem transforms)
+  if (!svgCTM || !elCTM) {
+    return { x: bbox.x, y: bbox.y, width: bbox.width, height: bbox.height };
+  }
+
+  // Composição: remove a transformação viewBox→viewport (do SVG raiz),
+  // mantendo APENAS a cadeia de transforms internos dos ancestrais.
+  // getCTM() sozinho inclui o scaling viewBox→viewport (spec SVG2 §4.4.2),
+  // o que retornaria coordenadas em pixels da viewport, não do viewBox.
+  const ctm = svgCTM.inverse().multiply(elCTM);
+
+  // Projeta os 4 cantos do BBox local para o espaço VIEWBOX via CTM relativa
+  const corners = [
+    { x: bbox.x, y: bbox.y },
+    { x: bbox.x + bbox.width, y: bbox.y },
+    { x: bbox.x + bbox.width, y: bbox.y + bbox.height },
+    { x: bbox.x, y: bbox.y + bbox.height },
+  ];
+
+  const pt = svgParent.createSVGPoint();
+  const transformed = corners.map((c) => {
+    pt.x = c.x;
+    pt.y = c.y;
+    const t = pt.matrixTransform(ctm);
+    return { x: t.x, y: t.y };
+  });
+
+  const xs = transformed.map((p) => p.x);
+  const ys = transformed.map((p) => p.y);
+
+  const minX = Math.min(...xs);
+  const maxX = Math.max(...xs);
+  const minY = Math.min(...ys);
+  const maxY = Math.max(...ys);
+
+  return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
+}
+
+/**
  * Calcula qual porcentagem da área total do SVG o elemento ocupa.
  *
  * Usado para decidir quanto "respiro" (padding) dar ao zoom:
@@ -60,13 +142,13 @@ function getSvgParent(el: Element): SVGSVGElement {
  * de mais espaço ao redor para não ficarem visualmente "colados"
  * nas bordas da viewport.
  *
- * @param elBBox    - BBox do elemento alvo (já extraída pelo caller).
- * @param parentBBox - BBox do SVG raiz (já extraída pelo caller).
+ * @param elBBox    - BBox do elemento alvo (coords ROOT, via CTM).
+ * @param parentBBox - BBox do SVG raiz (coords ROOT).
  * @returns Porcentagem de ocupação (0–100).
  */
 function getPercentageSize(
-  elBBox: DOMRect,
-  parentBBox: DOMRect,
+  elBBox: Rect,
+  parentBBox: Rect,
 ): number {
   const svgArea = parentBBox.width * parentBBox.height;
   const elArea = elBBox.width * elBBox.height;
@@ -124,7 +206,7 @@ function clampViewBox(
   vy: number,
   vw: number,
   vh: number,
-  p: DOMRect,
+  p: Rect,
 ): [number, number, number, number] {
   // Não pode ser maior que o SVG inteiro
   const w = Math.min(vw, p.width);
@@ -148,11 +230,12 @@ function clampViewBox(
  * Calcula o `viewBox` ideal para enquadrar um elemento SVG na viewport.
  *
  * Pipeline:
- *   1. BBox do elemento + SVG pai via `getBBox()`
+ *   1. BBox TRANSFORMADA do elemento (coords VIEWBOX via CTM relativa)
+ *      + viewBox declarado do SVG pai
  *   2. Zoom Floor — tamanho mínimo absoluto (5% do SVG)
  *   3. Padding adaptativo — respiro visual (15–25%)
  *   4. Trava de Aspect Ratio — casa viewBox com a tela (bidirecional)
- *   5. Clamping — mantém dentro dos limites do SVG
+ *   5. Clamping — mantém dentro do viewBox declarado
  *   6. Retorna `"x y width height"` — string que o GSAP interpolará
  *
  * @param element - O elemento SVG a enquadrar (qualquer `<g>`, `<path>`, etc.).
@@ -173,9 +256,12 @@ export function getElementViewBox(element: Element): string | null {
     // ═══════════════════════════════════════════════
     // 1. BOUNDING BOXES (elemento + SVG pai)
     // ═══════════════════════════════════════════════
-    // getBBox() retorna coordenadas no sistema de coordenadas
-    // do espaço SVG (não pixels de tela).
-    const elBBox = (element as unknown as SVGGraphicsElement).getBBox();
+    // getBBox() retorna coords LOCAIS — ignora transforms de
+    // ancestrais. getTransformedBBox() usa CTM relativa
+    // (svgCTM⁻¹ × elCTM) para projetar no espaço do viewBox.
+    const svgParent = getSvgParent(element);
+    const svgGfx = element as unknown as SVGGraphicsElement;
+    const elBBox = getTransformedBBox(svgGfx, svgParent);
     let { x, y, width, height } = elBBox;
 
     // Proteção: BBox sem dimensões → impossível calcular viewBox
@@ -187,11 +273,11 @@ export function getElementViewBox(element: Element): string | null {
       return null;
     }
 
-    // BBox do SVG raiz — base para Zoom Floor, padding e clamping
-    const svgParent = getSvgParent(element);
-    const parentBBox = (
-      svgParent as unknown as SVGGraphicsElement
-    ).getBBox();
+    // viewBox declarado do SVG raiz — define a "janela visível".
+    // Diferente de svgParent.getBBox() (que inclui conteúdo fora
+    // do viewport), o viewBox.baseVal é o espaço que a câmera
+    // pode enquadrar. Base para Zoom Floor, padding e clamping.
+    const parentBBox = svgParent.viewBox.baseVal;
 
     // ═══════════════════════════════════════════════
     // 2. ZOOM FLOOR (tamanho mínimo absoluto de câmera)
