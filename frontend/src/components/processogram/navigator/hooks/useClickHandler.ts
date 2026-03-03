@@ -48,6 +48,9 @@ export interface UseClickHandlerProps {
   /** Nível numérico atual da câmera (0–3). */
   currentLevelRef: RefObject<number>;
 
+  /** ID do elemento atualmente enquadrado pela câmera. */
+  currentElementIdRef: RefObject<string | null>;
+
   /** Histórico de navegação para drill-up. */
   historyLevelRef: RefObject<HistoryLevel>;
 }
@@ -77,6 +80,7 @@ export function useClickHandler({
   onClose,
   lockInteractionRef,
   currentLevelRef,
+  currentElementIdRef,
   historyLevelRef,
 }: UseClickHandlerProps): UseClickHandlerReturn {
   /**
@@ -97,26 +101,16 @@ export function useClickHandler({
   const getClickedStage = useCallback(
     (target: SVGElement, level: number): SVGElement | null => {
       const nextLevelSuffix = INVERSE_DICT[level + 1];
-      const currentLevelSuffix = INVERSE_DICT[level];
 
-      // Tenta próximo nível primeiro (drill-down)
-      const nextLevelSelector = nextLevelSuffix
-        ? `[id*="${nextLevelSuffix}"]`
-        : null;
-      const currentLevelSelector = currentLevelSuffix
-        ? `[id*="${currentLevelSuffix}"]`
-        : null;
+      // Apenas tenta o PRÓXIMO nível (drill-down legítimo).
+      // NÃO faz fallback para o nível atual — caso contrário,
+      // irmãos escurecidos do mesmo nível seriam capturados
+      // pelo closest(), impedindo o drill-up de ser atingido.
+      if (!nextLevelSuffix) return null;
 
-      const fromNext = nextLevelSelector
-        ? (target.closest(nextLevelSelector) as SVGElement | null)
-        : null;
-
-      if (fromNext) return fromNext;
-
-      // Fallback: nível atual
-      return currentLevelSelector
-        ? (target.closest(currentLevelSelector) as SVGElement | null)
-        : null;
+      return target.closest<SVGElement>(
+        `[id*="${nextLevelSuffix}" i]`,
+      );
     },
     [],
   );
@@ -153,11 +147,12 @@ export function useClickHandler({
 
       const clickedStage = getClickedStage(target, currentLevelRef.current);
 
-      if (clickedStage) {
+      // Se clicou num elemento válido E não é o elemento já focado (evita trap)
+      if (clickedStage && clickedStage.id !== currentElementIdRef.current) {
         // ══════════════════════════
         // DRILL-DOWN
         // ══════════════════════════
-        // Achou um grupo semântico → navega para dentro dele
+        // Achou um grupo semântico diferente → navega para dentro dele
         changeLevelTo(clickedStage, false);
         return;
       }
@@ -181,12 +176,20 @@ export function useClickHandler({
 
       // Busca o elemento do nível anterior no histórico
       const prevData = historyLevelRef.current[prevLevel];
-      if (!prevData) return;
+      if (!prevData) {
+        console.warn("Histórico de navegação perdido. Fazendo fallback para o Root.");
+        changeLevelTo(svgElement as SVGElement, true);
+        return;
+      }
 
       const element = svgElement.querySelector<SVGElement>(
         `#${CSS.escape(prevData.id)}`,
       );
-      if (!element) return;
+      if (!element) {
+        console.warn("Elemento pai não encontrado no DOM. Fazendo fallback para o Root.");
+        changeLevelTo(svgElement as SVGElement, true);
+        return;
+      }
 
       changeLevelTo(element, true);
     },
@@ -198,6 +201,7 @@ export function useClickHandler({
       onClose,
       lockInteractionRef,
       currentLevelRef,
+      currentElementIdRef,
       historyLevelRef,
     ],
   );

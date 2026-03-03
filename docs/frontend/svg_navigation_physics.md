@@ -50,19 +50,24 @@ A solução é um listener global no `window` que intercepta **todos** os clique
        ▼
   getClickedStage(target, currentLevel)
        │
-       ├── Tenta: target.closest("[id*='--lf']")  ← próximo nível
-       │   ↓ fallback
-       ├── Tenta: target.closest("[id*='--ps']")  ← nível atual
+       ├── Tenta: target.closest("[id*='--lf' i]")  ← próximo nível
        │
-       ├─ ACHOU elemento ──► changeLevelTo(elemento, false)
-       │                      = DRILL-DOWN (zoom in)
+       ├─ ACHOU elemento
+       │   │
+       │   ├─ elemento.id === currentElementIdRef? → DRILL-UP (auto-click guard)
+       │   │                                         → historyLevel[prev] → changeLevelTo(pai, true)
+       │   │
+       │   └─ elemento.id !== currentElementIdRef? → DRILL-DOWN (zoom in)
+       │                                             → changeLevelTo(elemento, false)
        │
        └─ NÃO ACHOU (clicou no "vazio")
               │
               ▼
          currentLevel > 1? ──► SIM → historyLevel[prev]
-              │                       → changeLevelTo(pai, true)
-              │                       = DRILL-UP (zoom out)
+              │                       ├─ prevData existe? → querySelector(prevId)
+              │                       │   ├─ element encontrado → changeLevelTo(pai, true)
+              │                       │   └─ element NÃO encontrado → fallback: changeLevelTo(svgElement, true)
+              │                       └─ prevData NÃO existe → fallback: changeLevelTo(svgElement, true)
               │
               └─ currentLevel = 1? → changeLevelTo(svgElement, true)
                                       = volta ao root
@@ -71,17 +76,20 @@ A solução é um listener global no `window` que intercepta **todos** os clique
                                       = fecha o processograma
 ```
 
+> **Nota:** Todos os seletores CSS usam a flag `i` (case-insensitive) para compatibilidade com IDs UPPERCASE do SVG (ex: `GROWING--PH-1`).
+
 ### `getClickedStage(target, level)` — Resolução do Grupo Semântico
 
-A prioridade é **sempre o próximo nível** antes do nível atual. Isso garante que ao clicar dentro de um grupo do nível atual, o sistema encontre o sub-grupo filho (drill-down), não o próprio grupo (que seria um no-op).
+Retorna **apenas** o próximo nível. O fallback ao nível atual foi **removido** para evitar que o sistema capture irmãos do nível corrente e execute drill-down lateral fantasma (o que impedia o drill-up).
 
 ```typescript
 // Se currentLevel = 0, tenta --lf (nível 1) primeiro
-const nextLevelSelector = `[id*="${INVERSE_DICT[level + 1]}"]`;
-const currentLevelSelector = `[id*="${INVERSE_DICT[level]}"]`;
+const nextLevelSelector = `[id*="${INVERSE_DICT[level + 1]}" i]`;
 
-return target.closest(nextLevelSelector) || target.closest(currentLevelSelector);
+return target.closest(nextLevelSelector) || null;
 ```
+
+> **Decisão:** Sem fallback ao `currentLevelSelector`, um clique num elemento do nível atual resulta em `null` → o sistema interpreta como "clique no vazio" → drill-up. Esse é o comportamento correto.
 
 ---
 
@@ -103,8 +111,8 @@ changeLevelTo(target: SVGElement, toPrevious: boolean, callback?: () => void): v
 changeLevelTo(target, toPrevious)
        │
        ▼
-  1. getElementViewBox(target)
-     └─ getBBox() → zoom floor → padding → trava AR → clamping → "x y w h"
+  1. getElementViewBox(target, originalViewBoxRef.current)
+     └─ swap viewBox → CTM composta → zoom floor → padding → trava AR → clamping → "x y w h"
        │
        ▼
   2. Salvar no histórico
@@ -113,8 +121,8 @@ changeLevelTo(target, toPrevious)
      └─ currentLevelRef.current = level
        │
        ▼
-  3. [TODO: Etapa 4] Isolamento Visual
-     └─ gsap.to(irmãos, { filter: brightness(0.3) })
+  3. Isolamento Visual
+     └─ gsap.to(irmãos, { filter: UNFOCUSED_FILTER[theme] })
        │
        ▼
   4. Notificar onChange(identifier, hierarchy)
@@ -153,9 +161,9 @@ Dado qualquer `<g>` clicado, sobe na árvore DOM usando `closest()` para montar 
 
 ```typescript
 // Para heat-stress--ci1 (nível 3):
-// 1. closest("[id*='--ph']") → feeding--ph1 (nível 2)
-// 2. closest("[id*='--lf']") → growing--lf1 (nível 1)
-// 3. closest("[id*='--ps']") → broiler--ps  (nível 0)
+// 1. closest("[id*='--ph' i]") → feeding--ph1 (nível 2)
+// 2. closest("[id*='--lf' i]") → growing--lf1 (nível 1)
+// 3. closest("[id*='--ps' i]") → broiler--ps  (nível 0)
 ```
 
 **Retorno:**
@@ -183,6 +191,7 @@ Todos os valores mutáveis durante animação são armazenados em `useRef()`, **
 | `currentElementIdRef` | `string \| null` | Idem |
 | `historyLevelRef` | `Record<number, {id}>` | Mapa de histórico — lido sincronicamente no `handleClick` |
 | `lockInteractionRef` | `boolean` | Flag de trava — precisa ser síncrona para o guard do `handleClick` |
+| `originalViewBoxRef` | `string \| null` | ViewBox original do `<svg>` — capturado na injeção, antes de animações GSAP. Estabiliza `getCTM()` durante drill-up |
 
 **Regra:** Se o valor precisa ser lido **sincronicamente** dentro de um event handler ou callback GSAP, ele DEVE ser `useRef()`. Valores que controlam rendering da UI usam `useState()`.
 
@@ -197,7 +206,11 @@ Todos os valores mutáveis durante animação são armazenados em `useRef()`, **
 | `event.stopPropagation()` | `handleClick` | Impede que outros listeners interceptem o clique |
 | `CSS.escape(id)` | `querySelector` | Protege contra IDs com caracteres especiais |
 | `getElementViewBox → null` | `changeLevelTo` | Se BBox falhar, aborta silenciosamente |
-| `historyLevel[prev] check` | `handleClick` drill-up | Se não há histórico para o nível anterior, aborta |
+| `historyLevel[prev] check` | `handleClick` drill-up | Se não há histórico, fallback para `changeLevelTo(svgElement, true)` |
+| Auto-click guard | `handleClick` | Se `clickedStage.id === currentElementIdRef` → trata como drill-up, não drill-down lateral |
+| Fallback `!element` | `handleClick` drill-up | Se `querySelector` não encontra o elemento do histórico → fallback para root |
+| Swap síncrono do viewBox | `getElementViewBox` | `finally` garante restauração do viewBox animado mesmo em caso de erro |
+| CSS `i` flag | Todos os `querySelector`/`closest` | IDs do SVG são UPPERCASE (ex: `GROWING--PH-1`) — seletores case-insensitive |
 
 ---
 
@@ -209,6 +222,6 @@ Etapa 2 (✅) → getElementViewBox.ts  → calcula PARA ONDE a câmera vai
 Etapa 3 (✅) → useNavigator.ts       → ANIMA a transição com GSAP
               useClickHandler.ts     → DECIDE drill-down vs drill-up
               hierarchy.ts           → MONTA o breadcrumb path
-Etapa 4 (🔲) → useHoverEffects.ts    → efeitos visuais de hover + isolamento
+Etapa 4 (✅) → useHoverEffects.ts    → efeitos visuais de hover + isolamento
 Etapa 5 (🔲) → useEventBus.ts        → navegação programática
 ```

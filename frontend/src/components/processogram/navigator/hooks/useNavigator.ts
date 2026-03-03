@@ -73,6 +73,13 @@ export interface UseNavigatorProps {
    * a animação completar.
    */
   setFullBrightnessToCurrentLevel: (toPrevious: boolean) => void;
+
+  /**
+   * ViewBox original do `<svg>` — capturado no momento da injeção,
+   * ANTES de qualquer animação GSAP. Usado para estabilizar getCTM()
+   * durante o cálculo de BBox em drill-up.
+   */
+  originalViewBoxRef: RefObject<string | null>;
 }
 
 // ─── Return Type ───────────────────────────────────────────────────────
@@ -104,6 +111,7 @@ export function useNavigator({
   onChange,
   getElementIdentifierWithHierarchy,
   setFullBrightnessToCurrentLevel,
+  originalViewBoxRef,
 }: UseNavigatorProps): UseNavigatorReturn {
   /**
    * Ref para a animação de escurecimento dos irmãos fora de foco.
@@ -119,7 +127,7 @@ export function useNavigator({
       // ═══════════════════════════════════════════════
       // 1. CALCULAR O VIEWBOX DESTINO
       // ═══════════════════════════════════════════════
-      const viewBox = getElementViewBox(target);
+      const viewBox = getElementViewBox(target, originalViewBoxRef.current);
       if (!viewBox) return;
 
       const id = target.id;
@@ -149,7 +157,7 @@ export function useNavigator({
       if (level === MAX_LEVEL) {
         // Nível máximo (ci): escurece os irmãos do mesmo nível
         const levelKey = INVERSE_DICT[level];
-        outOfFocusSelector = `[id*="${levelKey}"]:not([id="${id}"])`;
+        outOfFocusSelector = `[id*="${levelKey}" i]:not([id="${id}"])`;
       } else {
         // Outros níveis: escurece tudo com "--" que NÃO é
         // descendente do elemento alvo
@@ -211,7 +219,7 @@ export function useNavigator({
         },
       );
     },
-    [svgElement, historyLevelRef, lockInteractionRef, currentLevelRef, currentElementIdRef, currentTheme, onChange, getElementIdentifierWithHierarchy, setFullBrightnessToCurrentLevel],
+    [svgElement, historyLevelRef, lockInteractionRef, currentLevelRef, currentElementIdRef, currentTheme, onChange, getElementIdentifierWithHierarchy, setFullBrightnessToCurrentLevel, originalViewBoxRef],
   );
 
   return { changeLevelTo };

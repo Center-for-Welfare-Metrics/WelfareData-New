@@ -33,6 +33,7 @@ O `useSvgNavigatorLogic` é o **hook orquestrador** que compõe os 3 hooks inter
 │     currentLevelRef       → number                                 │
 │     currentElementIdRef   → string | null                          │
 │     lockInteractionRef    → boolean                                │
+│     originalViewBoxRef    → string | null (viewBox pré-animação)   │
 │                                                                    │
 │   Composição:                                                      │
 │     ┌─────────────────┐                                            │
@@ -63,15 +64,16 @@ O `useSvgNavigatorLogic` é o **hook orquestrador** que compõe os 3 hooks inter
 1. `page.tsx` renderiza `<ProcessogramViewer onSvgReady={updateSvgElement} />`
 2. `react-inlinesvg` injeta o SVG como DOM real
 3. `innerRef` → `handleSvgRef` → `sanitizeSvgElement` → `onSvgReady` → `updateSvgElement`
-4. `useSvgNavigatorLogic` armazena o `<svg>` em `useState`
+4. `useSvgNavigatorLogic` armazena o `<svg>` em `useState` e captura `originalViewBoxRef.current = svgEl.getAttribute("viewBox")` (antes de qualquer animação GSAP)
 5. O `useEffect` registra `handleClick` no `window`
 
 ### 2. Drill-Down (clique)
 1. Utilizador clica num `<path>` ou `<text>` dentro do SVG
 2. `window.click` → `handleClick` (de `useClickHandler`)
-3. `getClickedStage` sobe via `closest()` até achar o `<g>` semântico
-4. `changeLevelTo(target, false)` (de `useNavigator`):
-   - Calcula `viewBox` destino via `getElementViewBox`
+3. `getClickedStage` sobe via `closest()` até achar o `<g>` semântico do **próximo nível**
+4. Guard: se `clickedStage.id === currentElementIdRef.current` → trata como drill-up (auto-click guard)
+5. `changeLevelTo(target, false)` (de `useNavigator`):
+   - Calcula `viewBox` destino via `getElementViewBox(target, originalViewBoxRef.current)`
    - Salva no `historyLevelRef`
    - Aplica isolamento visual (GSAP filter) nos irmãos
    - Notifica `onChange(identifier, hierarchy)` → `page.tsx`
@@ -79,15 +81,17 @@ O `useSvgNavigatorLogic` é o **hook orquestrador** que compõe os 3 hooks inter
    - No `onComplete`: restaura brilho + desbloqueia interação
 
 ### 3. Hover
-1. `onMouseMove` (no wrapper do SVG) → `target.closest("[id*='--xx']")` → `setOnHover(id)`
+1. `onMouseMove` (no wrapper do SVG) → `target.closest("[id*='--xx' i]")` → `setOnHover(id)`
 2. `useHoverEffects` reage via `useEffect(onHover)`:
    - Hovered → `brightness(1)` / `grayscale(0)`
    - Irmãos → `brightness(0.3)` / `grayscale(1)`
 3. `onMouseLeave` → `setOnHover(null)` → restaura estado padrão do nível
 
-### 4. Drill-Up (clique no vazio)
-1. `handleClick` não encontra `<g>` semântico via `closest()`
+### 4. Drill-Up (clique no vazio ou auto-click)
+1. `handleClick` não encontra `<g>` semântico via `closest()`, **ou** `clickedStage.id === currentElementIdRef` (auto-click guard)
 2. Consulta `historyLevelRef[currentLevel - 1]` para o elemento anterior
+   - Se `prevData` não existe → fallback: `changeLevelTo(svgElement, true)` (volta ao root)
+   - Se `querySelector(prevId)` não encontra o elemento → fallback: idem
 3. `changeLevelTo(previousElement, true)` → zoom out animado
 4. Se já está no root (nível 0): `onClose()` → `page.tsx` limpa tudo
 

@@ -118,8 +118,8 @@ diretamente nos elementos SVG, sem classes CSS intermediárias:
 
 ```
 Drill-down (useNavigator.changeLevelTo):
-  1. Calcula viewBox destino (getElementViewBox)
-  2. Seleciona irmãos fora de foco
+  1. Calcula viewBox destino (getElementViewBox com swap síncrono do viewBox original)
+  2. Seleciona irmãos fora de foco (seletores CSS com flag `i` — case-insensitive)
   3. gsap.to(irmãos, { filter: UNFOCUSED_FILTER })
   4. gsap.fromTo(svg, { viewBox: atual }, { viewBox: destino })
   5. onComplete → setFullBrightnessToCurrentLevel()
@@ -158,8 +158,11 @@ Todos os primitivos SVG (`path`, `rect`, `polygon`, `circle`, `ellipse`, `line`,
 | `frontend/src/components/.../navigator/hooks/useNavigator.ts`  | Isolamento visual GSAP nos drill-down (UNFOCUSED_FILTER)|
 | `frontend/src/components/.../navigator/hooks/useHoverEffects.ts`| Isolamento visual GSAP no hover                        |
 | `frontend/src/components/.../navigator/consts.ts`              | FOCUSED_FILTER, UNFOCUSED_FILTER (dark/light)           |
-| `frontend/src/components/.../navigator/useSvgNavigatorLogic.ts`| Orquestrador: compõe os hooks acima                     |
+| `frontend/src/components/.../navigator/useSvgNavigatorLogic.ts`| Orquestrador: compõe os hooks acima + `originalViewBoxRef` |
+| `frontend/src/components/.../navigator/getElementViewBox.ts`   | Cálculo de viewBox com swap síncrono para estabilizar CTM |
 | `frontend/src/app/view/[id]/page.tsx`                          | Conecta orquestrador ao ProcessogramViewer              |
+
+> **Nota:** Todos os seletores CSS (`querySelector`, `closest`) usam a flag `i` (case-insensitive) para compatibilidade com IDs UPPERCASE do SVG (ex: `GROWING--PH-1`).
 
 ---
 

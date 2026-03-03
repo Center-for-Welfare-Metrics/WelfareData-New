@@ -11,10 +11,13 @@
 O browser já é um motor de câmera embutido: ao alterar o atributo `viewBox` de um `<svg>`, o browser recalcula toda a projeção automaticamente. O módulo `getElementViewBox` calcula a string `viewBox` exata que enquadra qualquer elemento SVG na viewport com precisão — e é essa string que o GSAP interpolará nas etapas seguintes para criar a animação suave de "zoom".
 
 ```
-getElementViewBox(element)  →  "142.5 80 450 300"
-                                 │     │   │    │
-                                 x     y   w    h  (coordenadas SVG)
+getElementViewBox(element, originalViewBox?)  →  "142.5 80 450 300"
+                                                   │     │   │    │
+                                                   x     y   w    h  (coordenadas SVG)
 ```
+
+- `element` — Qualquer elemento SVG a enquadrar
+- `originalViewBox?` — ViewBox original do `<svg>` (capturado na injeção, antes de animações GSAP). Quando fornecido, o módulo faz um **swap síncrono** temporário do viewBox antes de chamar `getCTM()`, garantindo coordenadas estáveis independentemente do estado de animação.
 
 ---
 
@@ -22,28 +25,48 @@ getElementViewBox(element)  →  "142.5 80 450 300"
 
 ```
 getElementViewBox.ts
-├── getSvgParent()        Sobe na árvore DOM até o <svg>
-├── getPercentageSize()   Área do elemento ÷ Área do SVG total
-├── getAdaptivePadding()  Limiares de respiro
-├── clampViewBox()        Restringe viewBox aos limites do SVG
-└── getElementViewBox()   Função principal exportada
+├── getSvgParent()          Sobe na árvore DOM até o <svg>
+├── getTransformedBBox()    BBox via CTM composta (svgCTM⁻¹ × elCTM)
+├── getPercentageSize()     Área do elemento ÷ Área do SVG total
+├── getAdaptivePadding()    Limiares de respiro
+├── clampViewBox()          Restringe viewBox aos limites do SVG
+└── getElementViewBox()     Função principal exportada
 ```
 
 ---
 
-## Algoritmo Passo a Passo (Pipeline de 6 etapas)
+## Algoritmo Passo a Passo (Pipeline de 7 etapas)
 
-### 1. Bounding Boxes (`getBBox()`)
+### 0. Swap Síncrono do ViewBox (estabiliza getCTM)
 
-Extrai as coordenadas do elemento alvo E do SVG pai no espaço de coordenadas SVG:
+O GSAP anima o atributo `viewBox` do `<svg>`. Isso faz com que `getCTM()` retorne coordenadas relativas ao viewBox **animado**, não ao original. Para o cálculo de BBox ser correto em qualquer momento (drill-down **e** drill-up), restauramos temporariamente o viewBox original antes de chamar `getCTM()`.
 
 ```typescript
-const elBBox = (element as SVGGraphicsElement).getBBox();
-const parentBBox = (svgParent as SVGGraphicsElement).getBBox();
+if (originalViewBox) {
+  const currentVB = svgParent.getAttribute("viewBox");
+  if (currentVB !== originalViewBox) {
+    svgParentForRestore = svgParent;
+    animatedViewBox = currentVB;
+    svgParent.setAttribute("viewBox", originalViewBox);
+  }
+}
 ```
 
-- `elBBox` → {x, y, width, height} do elemento clicado
-- `parentBBox` → {x, y, width, height} do SVG raiz (base para floor, padding e clamping)
+O swap é **síncrono** (mesmo microtask) — o browser **NÃO renderiza** o estado intermediário. Um bloco `finally` garante a restauração do viewBox animado mesmo em caso de erro.
+
+### 1. Bounding Boxes (CTM composta)
+
+Extrai as coordenadas do elemento alvo projetadas no espaço do viewBox, usando CTM composta para lidar corretamente com transforms aninhados:
+
+```typescript
+const elBBox = getTransformedBBox(svgGfx, svgParent);
+const parentBBox = svgParent.viewBox.baseVal;
+```
+
+- `elBBox` → {x, y, width, height} do elemento clicado, **projetado no espaço do viewBox** via `svgCTM⁻¹ × elCTM`
+- `parentBBox` → viewBox declarado do SVG raiz (espaço que a câmera pode enquadrar)
+
+> **Nota:** `getBBox()` retorna coords **locais** que ignoram transforms de ancestrais. `getTransformedBBox()` resolve isso compondo a CTM inversa do `<svg>` com a CTM do elemento: `svgParent.getCTM().inverse() × element.getCTM()`. Isso projeta os 4 cantos do BBox local no espaço de coordenadas do viewBox.
 
 ### 2. Zoom Floor (tamanho mínimo absoluto)
 
@@ -153,7 +176,8 @@ Concatenação dos 4 valores ajustados:
 │                                                                       │
 └───────────────────────────────────────────────────────────────────────┘
 
-     ↓ 1. getBBox()
+     ↓ 0. Swap viewBox original (estabiliza getCTM)
+     ↓ 1. getTransformedBBox(CTM composta)
      ↓ 2. Zoom Floor (min 5% do SVG)
 
 ┌──────────────────┐
@@ -177,6 +201,7 @@ Concatenação dos 4 valores ajustados:
 
      ↓ 5. Clamping (dentro dos limites)
      ↓ 6. return "x y w h"
+     ↓ finally: restore viewBox animado
 
 O GSAP (useNavigator) animará: viewBox antigo → viewBox novo em 0.7s
 O browser recalcula a projeção automaticamente = "zoom" suave
@@ -188,11 +213,12 @@ O browser recalcula a projeção automaticamente = "zoom" suave
 
 | Cenário | Proteção |
 |---|---|
-| `getBBox()` falha (elemento oculto/`display:none`) | `try/catch` retorna `null` |
+| `getCTM()`/`getBBox()` falha (elemento oculto/`display:none`) | `try/catch` retorna `null` |
 | BBox com dimensão zero | Retorna `null` com `console.warn` |
 | `<svg>` ancestral não encontrado | `getSvgParent()` lança erro (capturado pelo `try/catch`) |
 | SVG sem área (vazio) | `getPercentageSize()` retorna `0` (divisão protegida) |
 | Loop infinito em `getSvgParent()` | Limite de 10 iterações |
+| ViewBox animado pelo GSAP durante cálculo | Swap síncrono + `finally` garante restauração mesmo em caso de erro |
 
 ---
 
@@ -201,6 +227,10 @@ O browser recalcula a projeção automaticamente = "zoom" suave
 ### `getSvgParent(el: Element): SVGSVGElement`
 
 Sobe na árvore DOM até encontrar a tag `<svg>`. Limitado a 10 iterações para proteção contra DOMs corrompidos.
+
+### `getTransformedBBox(element: SVGGraphicsElement, svgParent: SVGSVGElement): DOMRect`
+
+Calcula a BBox do elemento **projetada no espaço de coordenadas do viewBox** do `<svg>` pai. Usa CTM composta (`svgParent.getCTM().inverse() × element.getCTM()`) para resolver corretamente transforms aninhados (`<g transform="translate(...)">`, `<g transform="scale(...)">`, etc.). Os 4 cantos da BBox local são transformados pela matriz composta e o AABB (axis-aligned bounding box) resultante é retornado.
 
 ### `getPercentageSize(elBBox: DOMRect, parentBBox: DOMRect): number`
 
@@ -221,21 +251,24 @@ Restringe o viewBox aos limites do SVG pai. Garante que width/height não exceda
 ```
 Etapa 1 (✅) → extractInfoFromId.ts → identifica QUAL elemento navegar
 Etapa 2 (✅) → getElementViewBox.ts  → calcula PARA ONDE a câmera vai
-Etapa 3 (🔲) → useNavigator.ts       → ANIMA a transição com GSAP
-Etapa 4 (🔲) → useHoverEffects.ts    → efeitos visuais de hover
+Etapa 3 (✅) → useNavigator.ts       → ANIMA a transição com GSAP
+Etapa 4 (✅) → useHoverEffects.ts    → efeitos visuais de hover
 Etapa 5 (🔲) → useEventBus.ts        → navegação programática
 ```
 
 ---
 
-## Exemplo de Uso (Prévia da Etapa 3)
+## Exemplo de Uso
 
 ```typescript
 import { getElementViewBox } from "@/components/processogram/navigator";
 import { gsap } from "gsap";
 
-// 1. Calcula o viewBox destino
-const targetViewBox = getElementViewBox(targetElement);
+// originalViewBox capturado na injeção do SVG (antes de animações)
+const originalViewBox = originalViewBoxRef.current;
+
+// 1. Calcula o viewBox destino (swap síncrono interno estabiliza getCTM)
+const targetViewBox = getElementViewBox(targetElement, originalViewBox);
 if (!targetViewBox) return;
 
 // 2. GSAP interpola os 4 números automaticamente

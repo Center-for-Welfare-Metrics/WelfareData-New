@@ -88,7 +88,7 @@ export function useHoverEffects({
       if (levelKey) {
         // Irmãos do nível atual → escurece (volta ao estado de navegação)
         const siblings = svgElement.querySelectorAll(
-          `[id*="${levelKey}"]:not([id="${currentId}"])`,
+          `[id*="${levelKey}" i]:not([id="${currentId}"])`,
         );
         if (siblings.length > 0) {
           gsap.to(siblings, {
@@ -101,7 +101,7 @@ export function useHoverEffects({
 
       // Elemento atual + filhos do próximo nível → brilho total
       const focusedSelector = nextLevelKey
-        ? `[id="${currentId}"],[id*="${nextLevelKey}"]`
+        ? `[id="${currentId}"],[id*="${nextLevelKey}" i]`
         : `[id="${currentId}"]`;
 
       const focused = svgElement.querySelectorAll(focusedSelector);
@@ -136,7 +136,7 @@ export function useHoverEffects({
 
     if (levelKey) {
       const notHovered = svgElement.querySelectorAll(
-        `[id*="${levelKey}"]:not([id="${onHover}"])`,
+        `[id*="${levelKey}" i]:not([id="${onHover}"])`,
       );
       if (notHovered.length > 0) {
         gsap.to(notHovered, {

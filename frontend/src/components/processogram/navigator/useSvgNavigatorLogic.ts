@@ -119,6 +119,12 @@ export function useSvgNavigatorLogic({
   /** Flag de trava: true durante animações para evitar double-clicks. */
   const lockInteractionRef = useRef<boolean>(false);
 
+  /** ViewBox original do SVG (capturado uma vez no carregamento).
+   *  Usado para estabilizar o cálculo de BBox via getCTM() —
+   *  sem isso, o getCTM() reflete o viewBox animado pelo GSAP,
+   *  distorcendo as coordenadas durante drill-up. */
+  const originalViewBoxRef = useRef<string | null>(null);
+
   // ═══════════════════════════════════════════════════
   // 3. HELPERS PARA useNavigator
   // ═══════════════════════════════════════════════════
@@ -185,7 +191,7 @@ export function useSvgNavigatorLogic({
       // Filhos do próximo nível (sub-grupos disponíveis para drill-down)
       if (nextLevelKey) {
         const children = svgElement.querySelectorAll(
-          `[id*="${nextLevelKey}"]`,
+          `[id*="${nextLevelKey}" i]`,
         );
         if (children.length > 0) {
           gsap.to(children, {
@@ -214,6 +220,7 @@ export function useSvgNavigatorLogic({
     onChange,
     getElementIdentifierWithHierarchy,
     setFullBrightnessToCurrentLevel,
+    originalViewBoxRef,
   });
 
   // 4b. Interceptação de cliques (drill-down / drill-up / close)
@@ -224,6 +231,7 @@ export function useSvgNavigatorLogic({
     onClose,
     lockInteractionRef,
     currentLevelRef,
+    currentElementIdRef,
     historyLevelRef,
   });
 
@@ -279,7 +287,7 @@ export function useSvgNavigatorLogic({
 
       // Sobe na árvore DOM até achar o grupo do próximo nível
       const hovered = target.closest<SVGElement>(
-        `[id*="${nextLevelKey}"]`,
+        `[id*="${nextLevelKey}" i]`,
       );
 
       if (hovered) {
@@ -307,6 +315,10 @@ export function useSvgNavigatorLogic({
    * react-inlinesvg terminar de injetar o <svg> no DOM.
    */
   const updateSvgElement = useCallback((svgEl: SVGSVGElement) => {
+    // Captura o viewBox original ANTES de qualquer animação GSAP.
+    // Este valor é imutável e usado como referência estável para
+    // o cálculo de BBox (getCTM) em getElementViewBox.
+    originalViewBoxRef.current = svgEl.getAttribute("viewBox");
     setSvgElement(svgEl);
   }, []);
 

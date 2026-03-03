@@ -239,6 +239,11 @@ function clampViewBox(
  *   6. Retorna `"x y width height"` — string que o GSAP interpolará
  *
  * @param element - O elemento SVG a enquadrar (qualquer `<g>`, `<path>`, etc.).
+ * @param originalViewBox - ViewBox original do SVG (capturado no carregamento).
+ *   Se fornecido, é restaurado temporariamente antes do cálculo de BBox
+ *   para garantir que getCTM() retorne coordenadas estáveis, independente
+ *   do viewBox animado pelo GSAP. O swap é síncrono (mesmo microtask)
+ *   e não causa render intermediário.
  * @returns String `viewBox` formatada, ou `null` se o cálculo falhar.
  *
  * @example
@@ -251,15 +256,44 @@ function clampViewBox(
  * // gsap.to(svgElement, { attr: { viewBox }, duration: 0.7 });
  * ```
  */
-export function getElementViewBox(element: Element): string | null {
+export function getElementViewBox(
+  element: Element,
+  originalViewBox?: string | null,
+): string | null {
+  // Referências para o finally — declaradas fora do try para
+  // garantir que o viewBox animado é restaurado mesmo em caso de erro.
+  let svgParentForRestore: SVGSVGElement | null = null;
+  let animatedViewBox: string | null = null;
+
   try {
+    // ═══════════════════════════════════════════════
+    // 0. SWAP SÍNCRONO DO VIEWBOX (estabiliza getCTM)
+    // ═══════════════════════════════════════════════
+    // O GSAP anima o atributo viewBox do <svg>. Isso faz com que
+    // getCTM() retorne coordenadas relativas ao viewBox ANIMADO,
+    // não ao original. Para o cálculo de BBox ser correto em
+    // qualquer momento (drill-down E drill-up), restauramos
+    // temporariamente o viewBox original antes de chamar getCTM().
+    //
+    // O swap é síncrono (mesmo microtask) — o browser NÃO renderiza
+    // o estado intermediário. O finally garante a restauração.
+    const svgParent = getSvgParent(element);
+
+    if (originalViewBox) {
+      const currentVB = svgParent.getAttribute("viewBox");
+      if (currentVB !== originalViewBox) {
+        svgParentForRestore = svgParent;
+        animatedViewBox = currentVB;
+        svgParent.setAttribute("viewBox", originalViewBox);
+      }
+    }
+
     // ═══════════════════════════════════════════════
     // 1. BOUNDING BOXES (elemento + SVG pai)
     // ═══════════════════════════════════════════════
     // getBBox() retorna coords LOCAIS — ignora transforms de
     // ancestrais. getTransformedBBox() usa CTM relativa
     // (svgCTM⁻¹ × elCTM) para projetar no espaço do viewBox.
-    const svgParent = getSvgParent(element);
     const svgGfx = element as unknown as SVGGraphicsElement;
     const elBBox = getTransformedBBox(svgGfx, svgParent);
     let { x, y, width, height } = elBBox;
@@ -379,5 +413,13 @@ export function getElementViewBox(element: Element): string | null {
     // que não foram completamente parseados.
     console.error("[getElementViewBox] Erro ao calcular viewBox:", error);
     return null;
+  } finally {
+    // ═══════════════════════════════════════════════
+    // RESTORE: Repõe o viewBox animado que o GSAP estava usando.
+    // Sem isso, a animação em andamento perderia sua referência.
+    // ═══════════════════════════════════════════════
+    if (animatedViewBox && svgParentForRestore) {
+      svgParentForRestore.setAttribute("viewBox", animatedViewBox);
+    }
   }
 }

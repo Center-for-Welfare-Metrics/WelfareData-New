@@ -98,13 +98,13 @@ ANTES (visão geral):        DEPOIS (zoom em LF1):
 
 - **Nível normal (< MAX_LEVEL):**
   ```
-  [id*="--"]:not([id^="{id}"] *):not([id="{id}"])
+  [id*="--" i]:not([id^="{id}"] *):not([id="{id}"])
   ```
-  Seleciona tudo com `--` que NÃO é descendente do alvo.
+  Seleciona tudo com `--` que NÃO é descendente do alvo. A flag `i` garante match case-insensitive (IDs do SVG são UPPERCASE).
 
 - **Nível máximo (ci — folha):**
   ```
-  [id*="{levelKey}"]:not([id="{id}"])
+  [id*="{levelKey}" i]:not([id="{id}"])
   ```
   Escurece apenas os irmãos do mesmo nível.
 
@@ -150,13 +150,13 @@ Mouse sobre PH1:           Mouse sai:
 ## Pipeline de Integração
 
 ```
-Etapa 1 (✅) → extractInfoFromId.ts → identifica QUAL elemento navegar
-Etapa 2 (✅) → getElementViewBox.ts  → calcula PARA ONDE a câmera vai
-Etapa 3 (✅) → useNavigator.ts       → ANIMA a transição com GSAP
-              useClickHandler.ts     → DECIDE drill-down vs drill-up
-              hierarchy.ts           → MONTA o breadcrumb path
-Etapa 4 (✅) → useNavigator.ts       → ESCURECE irmãos fora de foco
-              useHoverEffects.ts     → HOVER spotlight com filter
+Etapa 1 (✅) → extractInfoFromId.ts → identifica QUAL elemento navegar (alias case-insensitive)
+Etapa 2 (✅) → getElementViewBox.ts  → calcula PARA ONDE a câmera vai (swap síncrono + CTM composta)
+Etapa 3 (✅) → useNavigator.ts       → ANIMA a transição com GSAP (passa originalViewBoxRef)
+              useClickHandler.ts     → DECIDE drill-down vs drill-up (auto-click guard + fallbacks)
+              hierarchy.ts           → MONTA o breadcrumb path (seletores case-insensitive)
+Etapa 4 (✅) → useNavigator.ts       → ESCURECE irmãos fora de foco (seletores com flag `i`)
+              useHoverEffects.ts     → HOVER spotlight com filter (seletores com flag `i`)
 Etapa 5 (🔲) → useEventBus.ts        → navegação programática
-              useSvgNavigatorLogic   → orquestrador dos hooks
+              useSvgNavigatorLogic   → orquestrador dos hooks (+ originalViewBoxRef)
 ```

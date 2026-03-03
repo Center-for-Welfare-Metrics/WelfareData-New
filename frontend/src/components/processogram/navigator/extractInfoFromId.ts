@@ -40,15 +40,18 @@ import type {
 //   "some-random-id"        → sem "--" → não navegável
 
 /**
- * Extrai o alias de nível puro (só letras) da parte após `--`.
+ * Extrai o alias de nível puro (só letras, lowercase) da parte após `--`.
  * Retorna `null` se o ID não contém `--` ou o alias não é reconhecido.
+ *
+ * Normaliza para lowercase para suportar SVGs com IDs em maiúsculas
+ * (ex: `SOW--LF` → alias `"lf"`, não `"LF"`).
  */
 function extractAlias(id: string): LevelAlias | null {
   const separatorIndex = id.indexOf("--");
   if (separatorIndex === -1) return null;
 
   const afterSeparator = id.slice(separatorIndex + 2);
-  const lettersOnly = afterSeparator.replace(/[^a-zA-Z]/g, "");
+  const lettersOnly = afterSeparator.replace(/[^a-zA-Z]/g, "").toLowerCase();
 
   return lettersOnly in LEVEL_LABELS ? (lettersOnly as LevelAlias) : null;
 }

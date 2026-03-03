@@ -98,7 +98,7 @@ export function getHierarchy(element: Element): HierarchyResult {
     const levelStr = NUMBER_TO_ALIAS[prevLevel];
     if (!levelStr) break;
 
-    const closest = current.closest(`[id*="--${levelStr}"]`);
+    const closest = current.closest(`[id*="--${levelStr}" i]`);
     if (!closest) break;
 
     const info = parseElementId(closest.id);
