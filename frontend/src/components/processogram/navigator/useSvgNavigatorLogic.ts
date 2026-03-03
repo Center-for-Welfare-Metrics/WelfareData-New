@@ -84,6 +84,15 @@ export interface UseSvgNavigatorLogicReturn {
    * Limpa o hover visual quando o cursor sai do SVG.
    */
   onMouseLeave: () => void;
+
+  /**
+   * Navegação programática para um nível específico do histórico.
+   * Usado pelo breadcrumb e pelo botão Home.
+   *
+   * @param levelIndex - Índice do nível destino (0–3).
+   *                     Se < 0, faz reset total (volta à visão geral).
+   */
+  navigateToLevel: (levelIndex: number) => void;
 }
 
 // ─── Hook ──────────────────────────────────────────────────────────────
@@ -323,6 +332,110 @@ export function useSvgNavigatorLogic({
   }, []);
 
   // ═══════════════════════════════════════════════════
+  // 8. NAVEGAÇÃO PROGRAMÁTICA (BREADCRUMB / HOME)
+  // ═══════════════════════════════════════════════════
+
+  /**
+   * Navega programaticamente para um nível específico do histórico.
+   *
+   * - levelIndex < 0  → Reset total: anima o viewBox ao original,
+   *                      limpa refs e chama onClose().
+   * - levelIndex === 0 → Volta ao root do SVG (nível Production System).
+   * - levelIndex >= 1  → Consulta o histórico e navega ao elemento guardado.
+   * - levelIndex === currentLevel → Ignora (já está nesse nível).
+   */
+  const navigateToLevel = useCallback(
+    (levelIndex: number) => {
+      if (!svgElement) return;
+      if (lockInteractionRef.current) return;
+
+      // Já está nesse nível — nada a fazer
+      if (levelIndex === currentLevelRef.current && levelIndex >= 0) return;
+
+      // ── RESET TOTAL (Home / fechar) ──
+      if (levelIndex < 0) {
+        lockInteractionRef.current = true;
+
+        // Reverte todos os filtros visuais (escurecimento)
+        const allFiltered = svgElement.querySelectorAll('[id*="--"]');
+        if (allFiltered.length > 0) {
+          gsap.to(allFiltered, {
+            filter: FOCUSED_FILTER[currentTheme],
+            duration: ANIMATION_DURATION,
+            ease: ANIMATION_EASE,
+          });
+        }
+
+        // Anima o viewBox de volta ao original
+        const originalVB = originalViewBoxRef.current;
+        if (originalVB) {
+          gsap.to(svgElement, {
+            attr: { viewBox: originalVB },
+            duration: ANIMATION_DURATION,
+            ease: ANIMATION_EASE,
+            onComplete: () => {
+              gsap.set(svgElement, {
+                pointerEvents: "auto",
+                onComplete: () => {
+                  // Limpa todas as refs internas
+                  historyLevelRef.current = {};
+                  currentLevelRef.current = 0;
+                  currentElementIdRef.current = null;
+                  lockInteractionRef.current = false;
+
+                  // Notifica o page.tsx para limpar estado React
+                  onClose();
+                },
+              });
+            },
+          });
+        } else {
+          // Sem viewBox original — limpa direto
+          historyLevelRef.current = {};
+          currentLevelRef.current = 0;
+          currentElementIdRef.current = null;
+          lockInteractionRef.current = false;
+          onClose();
+        }
+        return;
+      }
+
+      // ── NAVEGAR A UM NÍVEL ESPECÍFICO DO HISTÓRICO ──
+      const historyEntry = historyLevelRef.current[levelIndex];
+
+      if (!historyEntry) {
+        // Sem histórico para esse nível — fallback ao root
+        changeLevelTo(svgElement as SVGElement, true);
+        return;
+      }
+
+      const element = svgElement.querySelector<SVGElement>(
+        `#${CSS.escape(historyEntry.id)}`,
+      );
+
+      if (!element) {
+        console.warn(
+          `[navigateToLevel] Elemento "${historyEntry.id}" não encontrado no DOM. Fallback ao root.`,
+        );
+        changeLevelTo(svgElement as SVGElement, true);
+        return;
+      }
+
+      // Limpa entradas do histórico para níveis mais profundos que o destino,
+      // para que um futuro drill-down não herde estado stale.
+      const historyKeys = Object.keys(historyLevelRef.current).map(Number);
+      for (const key of historyKeys) {
+        if (key > levelIndex) {
+          delete historyLevelRef.current[key];
+        }
+      }
+
+      changeLevelTo(element, true);
+    },
+    [svgElement, changeLevelTo, currentTheme, onClose],
+  );
+
+  // ═══════════════════════════════════════════════════
   // RETURN
   // ═══════════════════════════════════════════════════
 
@@ -330,5 +443,6 @@ export function useSvgNavigatorLogic({
     updateSvgElement,
     onMouseMove,
     onMouseLeave,
+    navigateToLevel,
   };
 }

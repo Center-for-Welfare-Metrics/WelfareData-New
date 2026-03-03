@@ -122,7 +122,7 @@ export default function PublicViewPage() {
 
   // ─── Orquestrador (System B) ─────────────────────────────────────────
 
-  const { updateSvgElement, onMouseMove, onMouseLeave } =
+  const { updateSvgElement, onMouseMove, onMouseLeave, navigateToLevel } =
     useSvgNavigatorLogic({
       currentTheme,
       onChange: handleNavigatorChange,
@@ -132,19 +132,18 @@ export default function PublicViewPage() {
   // ─── Callbacks da UI ─────────────────────────────────────────────────
 
   const clearSelection = useCallback(() => {
-    handleNavigatorClose();
-  }, [handleNavigatorClose]);
+    navigateToLevel(-1);
+  }, [navigateToLevel]);
 
   const navigateUp = useCallback(
     (levelIndex: number) => {
-      // O breadcrumb clicado — usa o SidePanel/breadcrumb para navegar
-      // Para simplificar: limpa seleção (o utilizador pode re-clicar no SVG)
-      // TODO: Implementar drill-up programático via EventBus no navigator
       if (levelIndex < 0) {
         clearSelection();
+        return;
       }
+      navigateToLevel(levelIndex);
     },
-    [clearSelection],
+    [clearSelection, navigateToLevel],
   );
 
   useEffect(() => {
