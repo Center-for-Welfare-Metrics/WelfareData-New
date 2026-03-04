@@ -1,7 +1,8 @@
 import puppeteer, { Browser, Page } from 'puppeteer';
-import { optimize } from 'svgo';
 import { JSDOM } from 'jsdom';
 import sharp from 'sharp';
+import { Worker } from 'worker_threads';
+import path from 'path';
 
 import {
   ISvgProcessor,
@@ -98,9 +99,13 @@ const BBOX_EXTRACTION_SCRIPT = `
 `;
 
 export class SvgProcessorService implements ISvgProcessor {
-  private getSvgoConfig() {
+  private getSvgoConfig(svgSize: number) {
+    // Disable multipass for large SVGs (>1MB) — single pass already removes ~95%
+    // of unnecessary data. Multipass on large files blocks the event loop for minutes.
+    const useMultipass = svgSize < 1_000_000;
+
     return {
-      multipass: true,
+      multipass: useMultipass,
       plugins: [
         {
           name: 'preset-default',
@@ -144,9 +149,60 @@ export class SvgProcessorService implements ISvgProcessor {
     }
   }
 
-  private optimizeSvg(svgContent: string): string {
-    const result = optimize(svgContent, this.getSvgoConfig());
-    return result.data;
+  /**
+   * Run SVGO in a Worker Thread to avoid blocking the event loop.
+   * The optimize() call is pure CPU (string → string) with no I/O,
+   * making it a perfect candidate for worker_threads.
+   */
+  private optimizeSvg(svgContent: string): Promise<string> {
+    const useMultipass = svgContent.length < 1_000_000;
+    console.log(`⏱️ [SvgProcessor] SVGO config: multipass=${useMultipass}, inputSize=${svgContent.length}`);
+    console.log(`⏱️ [SvgProcessor] SVGO optimize() STARTING in Worker Thread...`);
+    const startMs = Date.now();
+
+    // Resolve worker path — ts-node-dev transpiles .ts on-the-fly
+    const workerPath = path.resolve(__dirname, 'svgo.worker.ts');
+
+    return new Promise((resolve, reject) => {
+      const worker = new Worker(workerPath, {
+        execArgv: ['--require', 'ts-node/register/transpile-only'],
+      });
+
+      // Safety timeout: kill worker if SVGO takes too long (5 min)
+      const timeout = setTimeout(() => {
+        worker.terminate();
+        reject(new Error(`SVGO worker timed out after ${PROCESS_TIMEOUT_MS / 1000}s`));
+      }, PROCESS_TIMEOUT_MS);
+
+      worker.on('message', (msg: { success: boolean; data?: string; error?: string }) => {
+        clearTimeout(timeout);
+        worker.terminate();
+        if (msg.success) {
+          console.log(`⏱️ [SvgProcessor] SVGO optimize() FINISHED in ${Date.now() - startMs}ms, output=${msg.data!.length} bytes`);
+          resolve(msg.data!);
+        } else {
+          console.error(`🔴 [SvgProcessor] SVGO optimize() FAILED in ${Date.now() - startMs}ms:`, msg.error);
+          reject(new Error(`SVGO optimization failed: ${msg.error}`));
+        }
+      });
+
+      worker.on('error', (err: Error) => {
+        clearTimeout(timeout);
+        console.error(`🔴 [SvgProcessor] SVGO Worker error after ${Date.now() - startMs}ms:`, err.message);
+        reject(err);
+      });
+
+      worker.on('exit', (code) => {
+        if (code !== 0 && code !== 1) {
+          clearTimeout(timeout);
+          reject(new Error(`SVGO Worker exited with code ${code}`));
+        }
+      });
+
+      // Send only serializable data — the Worker reconstructs the full
+      // SVGO config with plugins internally
+      worker.postMessage({ svgContent, multipass: useMultipass, svgSize: svgContent.length });
+    });
   }
 
   private extractMetadata(svgContent: string): SvgMetadata {
@@ -158,16 +214,14 @@ export class SvgProcessorService implements ISvgProcessor {
     }
 
     const viewBox = svgElement.getAttribute('viewBox') || '0 0 1920 1080';
-    const width = parseFloat(svgElement.getAttribute('width') || '1920');
-    const height = parseFloat(svgElement.getAttribute('height') || '1080');
-
     const viewBoxParts = viewBox.split(/\s+|,/).map(parseFloat);
-    const actualWidth = width || viewBoxParts[2] || 1920;
-    const actualHeight = height || viewBoxParts[3] || 1080;
+
+    const width = parseFloat(svgElement.getAttribute('width')!) || viewBoxParts[2] || 1920;
+    const height = parseFloat(svgElement.getAttribute('height')!) || viewBoxParts[3] || 1080;
 
     return {
-      width: actualWidth,
-      height: actualHeight,
+      width,
+      height,
       viewbox: viewBox,
     };
   }
@@ -195,15 +249,26 @@ export class SvgProcessorService implements ISvgProcessor {
   }
 
   async process(buffer: Buffer): Promise<ProcessedSvgOutput> {
+    console.log(`⏱️ [SvgProcessor] process() ENTERED, buffer size: ${buffer.length}`);
     const svgContent = buffer.toString('utf-8');
+    console.log(`⏱️ [SvgProcessor] Input SVG: ${svgContent.length} chars`);
+    console.log(`⏱️ [SvgProcessor] Calling optimizeSvg()...`);
 
-    const optimizedSvg = this.optimizeSvg(svgContent);
+    console.time('svgo');
+    const optimizedSvg = await this.optimizeSvg(svgContent);
+    console.timeEnd('svgo');
+    console.log(`⏱️ [SvgProcessor] Optimized SVG: ${optimizedSvg.length} bytes`);
+
     const metadata = this.extractMetadata(optimizedSvg);
+    console.log(`⏱️ [SvgProcessor] Metadata: ${JSON.stringify(metadata)}`);
 
     let browser: Browser | null = null;
 
     const doProcess = async (): Promise<ProcessedSvgOutput> => {
+      console.time('browserLaunch');
       browser = await this.launchBrowser();
+      console.timeEnd('browserLaunch');
+
       const page = await browser.newPage();
 
       try {
@@ -212,6 +277,7 @@ export class SvgProcessorService implements ISvgProcessor {
           height: Math.ceil(metadata.height),
           deviceScaleFactor: 2,
         });
+        console.log(`⏱️ [SvgProcessor] Viewport: ${Math.ceil(metadata.width)}x${Math.ceil(metadata.height)} @2x`);
 
         const htmlContent = `
           <!DOCTYPE html>
@@ -229,10 +295,12 @@ export class SvgProcessorService implements ISvgProcessor {
           </html>
         `;
 
+        console.time('setContent');
         await page.setContent(htmlContent, {
           waitUntil: 'domcontentloaded',
           timeout: PAGE_CONTENT_TIMEOUT_MS,
         });
+        console.timeEnd('setContent');
 
         await page.evaluate(BBOX_EXTRACTION_SCRIPT);
 
@@ -241,11 +309,19 @@ export class SvgProcessorService implements ISvgProcessor {
         });
 
         console.log(`[SvgProcessor] Found ${elements.length} rasterizable elements`);
+        console.time('rasterizeAll');
 
         const rasterImages = new Map<string, IRasterImage>();
+        let rasterCount = 0;
 
         for (const element of elements) {
           try {
+            rasterCount++;
+            // Sanitize dots in element IDs — Mongoose Map keys cannot contain "."
+            const safeId = element.id.replace(/\./g, '_');
+            if (rasterCount % 25 === 0 || rasterCount === 1) {
+              console.log(`⏱️ [SvgProcessor] Rasterizing ${rasterCount}/${elements.length}: ${safeId}`);
+            }
             const screenshotBuffer = await this.rasterizeElement(page, element.id, {
               x: element.x,
               y: element.y,
@@ -254,7 +330,7 @@ export class SvgProcessorService implements ISvgProcessor {
             });
 
             const processedBuffer = await sharp(screenshotBuffer)
-              .png({ compressionLevel: 9 })
+              .png({ compressionLevel: 6 })
               .toBuffer();
 
             const rasterImage: IRasterImage = {
@@ -267,12 +343,13 @@ export class SvgProcessorService implements ISvgProcessor {
             };
 
             (rasterImage as any)._buffer = processedBuffer;
-            rasterImages.set(element.id, rasterImage);
+            rasterImages.set(safeId, rasterImage);
           } catch (error) {
             console.error(`[SvgProcessor] Failed to rasterize element ${element.id}:`, error);
           }
         }
 
+        console.timeEnd('rasterizeAll');
         console.log(`[SvgProcessor] Rasterized ${rasterImages.size}/${elements.length} elements`);
 
         return { optimizedSvg, rasterImages, metadata };

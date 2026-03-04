@@ -65,24 +65,14 @@ export const fixMissingSvgIdPlugin: CustomPlugin = {
 
           const currentId = node.attributes.id;
 
-          // If element already has a valid ID, track it and skip
+          // Only track elements that already have a meaningful ID.
+          // Elements without IDs are not interactive — generating
+          // synthetic --el-* IDs inflates the SVG (up to +1.3MB on
+          // large files) and slows down SVGO multipass for no benefit,
+          // since the rasterizer only targets --ps/lf/ph/ci suffixes.
           if (currentId) {
             usedIds.add(currentId);
-            return;
           }
-
-          // Generate a unique ID for elements without one
-          counters[tagName] = (counters[tagName] || 0) + 1;
-          let newId = `--el-${tagName}-${counters[tagName]}`;
-
-          // Ensure ID is unique
-          while (usedIds.has(newId)) {
-            counters[tagName]++;
-            newId = `--el-${tagName}-${counters[tagName]}`;
-          }
-
-          node.attributes.id = newId;
-          usedIds.add(newId);
         },
       },
     };

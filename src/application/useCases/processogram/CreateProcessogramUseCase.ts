@@ -61,9 +61,15 @@ export class CreateProcessogramUseCase {
       throw new Error('Processogram with this name already exists for this production module');
     }
 
+    console.log('⏱️ [UseCase] Step 5: Starting SVG processing...');
+    console.time('svgProcess');
+
     // Step 5: Process SVG
     const svgProcessor = getSvgProcessor();
     const processedSvg = await svgProcessor.process(fileBuffer);
+
+    console.timeEnd('svgProcess');
+    console.log(`⏱️ [UseCase] SVG processed. Raster images: ${processedSvg.rasterImages.size}, SVG size: ${processedSvg.optimizedSvg.length} bytes`);
 
     // Step 6: Get storage service
     const storage = getStorageService();
@@ -72,33 +78,43 @@ export class CreateProcessogramUseCase {
     const basePath = `processograms/${specie.pathname}/${productionModule.slug}/${slug}`;
 
     // Step 7: Upload optimized SVG
+    console.log('⏱️ [UseCase] Step 7: Uploading optimized SVG...');
     const svgPath = `${basePath}/light/${slug}.svg`;
     const svgBuffer = Buffer.from(processedSvg.optimizedSvg, 'utf-8');
     const svgUrl = await storage.upload(svgBuffer, svgPath, 'image/svg+xml');
+    console.log('⏱️ [UseCase] SVG uploaded.');
 
-    // Step 8: Upload raster images
+    // Step 8: Upload raster images (parallel in batches of 20)
+    console.log(`⏱️ [UseCase] Step 8: Uploading raster images...`);
+    console.time('rasterUpload');
     const rasterImagesLight: Record<string, IRasterImage> = {};
+    const BATCH_SIZE = 20;
 
-    for (const [elementId, rasterImage] of processedSvg.rasterImages) {
-      const imageBuffer = (rasterImage as any)._buffer as Buffer;
-      if (!imageBuffer) {
-        console.warn(`No buffer found for element ${elementId}, skipping...`);
-        continue;
+    const entries = [...processedSvg.rasterImages.entries()].filter(
+      ([, img]) => !!(img as any)._buffer
+    );
+    console.log(`⏱️ [UseCase] ${entries.length} raster images to upload in batches of ${BATCH_SIZE}`);
+
+    for (let i = 0; i < entries.length; i += BATCH_SIZE) {
+      const batch = entries.slice(i, i + BATCH_SIZE);
+      const results = await Promise.all(
+        batch.map(async ([elementId, rasterImage]) => {
+          const imageBuffer = (rasterImage as any)._buffer as Buffer;
+          const imagePath = `${basePath}/light/raster/${elementId}.png`;
+          const imageUrl = await storage.upload(imageBuffer, imagePath, 'image/png');
+          return [elementId, {
+            src: imageUrl,
+            bucket_key: imagePath,
+            width: rasterImage.width,
+            height: rasterImage.height,
+            x: rasterImage.x,
+            y: rasterImage.y,
+          }] as [string, IRasterImage];
+        })
+      );
+      for (const [elementId, data] of results) {
+        rasterImagesLight[elementId] = data;
       }
-
-      // Upload PNG to GCS
-      const imagePath = `${basePath}/light/raster/${elementId}.png`;
-      const imageUrl = await storage.upload(imageBuffer, imagePath, 'image/png');
-
-      // Build final raster image object (without buffer)
-      rasterImagesLight[elementId] = {
-        src: imageUrl,
-        bucket_key: imagePath,
-        width: rasterImage.width,
-        height: rasterImage.height,
-        x: rasterImage.x,
-        y: rasterImage.y,
-      };
     }
 
     // Step 9: Generate unique identifier

@@ -25,6 +25,12 @@ export class ProcessogramController {
   }
 
   static async create(req: Request, res: Response) {
+    console.log('🟢 [DEBUG] ProcessogramController.create ENTERED');
+    console.log(`🟢 [DEBUG] req.file exists: ${!!req.file}`);
+    console.log(`🟢 [DEBUG] req.file?.size: ${req.file?.size}`);
+    console.log(`🟢 [DEBUG] req.body keys: ${Object.keys(req.body || {})}`);
+    console.log(`🟢 [DEBUG] req.user: ${JSON.stringify(req.user)}`);
+
     const useCase = new CreateProcessogramUseCase();
 
     try {

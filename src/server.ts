@@ -21,6 +21,17 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
 
+// 🔍 DEBUG: Log every incoming request
+app.use((req, res, next) => {
+  if (req.path.includes('/processograms') && req.method === 'POST') {
+    console.log(`\n🔵 [DEBUG] Incoming: ${req.method} ${req.path}`);
+    console.log(`🔵 [DEBUG] Content-Type: ${req.headers['content-type']}`);
+    console.log(`🔵 [DEBUG] Content-Length: ${req.headers['content-length']}`);
+    console.log(`🔵 [DEBUG] Cookies present: ${!!req.cookies?.token}`);
+  }
+  next();
+});
+
 // Request timeout: 6 min para rotas pesadas (SVG processing), sem timeout para SSE, 30s para o resto
 app.use((req, res, next) => {
   const isHeavyRoute =

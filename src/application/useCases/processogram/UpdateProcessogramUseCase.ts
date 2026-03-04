@@ -106,24 +106,34 @@ export class UpdateProcessogramUseCase {
       const svgBuffer = Buffer.from(processedSvg.optimizedSvg, 'utf-8');
       const svgUrl = await storage.upload(svgBuffer, svgPath, 'image/svg+xml');
 
-      // Upload raster images
+      // Upload raster images (parallel in batches of 20)
       const rasterImagesLight: Record<string, IRasterImage> = {};
+      const BATCH_SIZE = 20;
 
-      for (const [elementId, rasterImage] of processedSvg.rasterImages) {
-        const imageBuffer = (rasterImage as any)._buffer as Buffer;
-        if (!imageBuffer) continue;
+      const entries = [...processedSvg.rasterImages.entries()].filter(
+        ([, img]) => !!(img as any)._buffer
+      );
 
-        const imagePath = `${basePath}/light/raster/${elementId}.png`;
-        const imageUrl = await storage.upload(imageBuffer, imagePath, 'image/png');
-
-        rasterImagesLight[elementId] = {
-          src: imageUrl,
-          bucket_key: imagePath,
-          width: rasterImage.width,
-          height: rasterImage.height,
-          x: rasterImage.x,
-          y: rasterImage.y,
-        };
+      for (let i = 0; i < entries.length; i += BATCH_SIZE) {
+        const batch = entries.slice(i, i + BATCH_SIZE);
+        const results = await Promise.all(
+          batch.map(async ([elementId, rasterImage]) => {
+            const imageBuffer = (rasterImage as any)._buffer as Buffer;
+            const imagePath = `${basePath}/light/raster/${elementId}.png`;
+            const imageUrl = await storage.upload(imageBuffer, imagePath, 'image/png');
+            return [elementId, {
+              src: imageUrl,
+              bucket_key: imagePath,
+              width: rasterImage.width,
+              height: rasterImage.height,
+              x: rasterImage.x,
+              y: rasterImage.y,
+            }] as [string, IRasterImage];
+          })
+        );
+        for (const [elementId, imgData] of results) {
+          rasterImagesLight[elementId] = imgData;
+        }
       }
 
       // Update file fields

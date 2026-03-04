@@ -8,7 +8,22 @@ import { AuthMiddleware } from '../middlewares/AuthMiddleware';
 import { requireRole } from '../middlewares/RoleMiddleware';
 import { uploadSvg } from '../../infrastructure/config/upload';
 
+import { Request, Response, NextFunction } from 'express';
+
 const router = Router();
+
+// 🔍 DEBUG: Multer error handler wrapper
+const multerDebug = (req: Request, res: Response, next: NextFunction) => {
+  console.log('🟡 [DEBUG] Before Multer — starting file parse');
+  uploadSvg.single('file')(req, res, (err: any) => {
+    if (err) {
+      console.error('🔴 [DEBUG] Multer ERROR:', err.message, err.code, err);
+      return res.status(400).json({ error: `Upload failed: ${err.message}` });
+    }
+    console.log('🟡 [DEBUG] After Multer — file parsed OK, size:', req.file?.size);
+    next();
+  });
+};
 
 // Private — Auth required
 router.get('/', AuthMiddleware, ProcessogramController.list);
@@ -22,9 +37,12 @@ router.post('/:processogramId/chat/stream', ChatController.stream);
 
 router.post(
   '/',
+  (req: Request, _res: Response, next: NextFunction) => { console.log('🟡 [DEBUG] POST / — Auth check starting'); next(); },
   AuthMiddleware,
+  (req: Request, _res: Response, next: NextFunction) => { console.log('🟡 [DEBUG] POST / — Auth passed, role check next'); next(); },
   requireRole('admin'),
-  uploadSvg.single('file'),
+  (req: Request, _res: Response, next: NextFunction) => { console.log('🟡 [DEBUG] POST / — Role passed, multer next'); next(); },
+  multerDebug,
   ProcessogramController.create
 );
 
