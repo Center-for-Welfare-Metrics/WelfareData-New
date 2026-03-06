@@ -36,9 +36,6 @@ export interface UseClickHandlerProps {
     callback?: () => void,
   ) => void;
 
-  /** Setter do hover (limpa ao clicar). */
-  setOnHover: (id: string | null) => void;
-
   /** Callback para fechar o processograma (drill-up além do root). */
   onClose: () => void;
 
@@ -76,7 +73,6 @@ export interface UseClickHandlerReturn {
 export function useClickHandler({
   svgElement,
   changeLevelTo,
-  setOnHover,
   onClose,
   lockInteractionRef,
   currentLevelRef,
@@ -142,9 +138,6 @@ export function useClickHandler({
       // ── Impede propagação para outros listeners ──
       event.stopPropagation();
 
-      // ── Limpa hover ao clicar ──
-      setOnHover(null);
-
       const clickedStage = getClickedStage(target, currentLevelRef.current);
 
       // Se clicou num elemento válido E não é o elemento já focado (evita trap)
@@ -197,7 +190,6 @@ export function useClickHandler({
       svgElement,
       changeLevelTo,
       getClickedStage,
-      setOnHover,
       onClose,
       lockInteractionRef,
       currentLevelRef,

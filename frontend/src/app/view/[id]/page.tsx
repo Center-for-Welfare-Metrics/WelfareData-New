@@ -122,7 +122,7 @@ export default function PublicViewPage() {
 
   // ─── Orquestrador (System B) ─────────────────────────────────────────
 
-  const { updateSvgElement, onMouseMove, onMouseLeave, navigateToLevel } =
+  const { updateSvgElement, navigateToLevel } =
     useSvgNavigatorLogic({
       currentTheme,
       onChange: handleNavigatorChange,
@@ -278,8 +278,6 @@ export default function PublicViewPage() {
               <ProcessogramViewer
                 svgUrl={state.svgUrl}
                 onSvgReady={updateSvgElement}
-                onMouseMove={onMouseMove}
-                onMouseLeave={onMouseLeave}
               />
 
               <SidePanel

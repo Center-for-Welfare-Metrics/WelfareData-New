@@ -10,9 +10,10 @@
  * Responsabilidades:
  *   1. Calcular o viewBox destino via `getElementViewBox()`
  *   2. Salvar no histórico de navegação (refs)
- *   3. Bloquear interação durante a animação (lockInteraction)
- *   4. Animar o viewBox com GSAP (`gsap.fromTo`)
+ *   3. Blindar eventos DOM (lock + pointerEvents + killTweensOf)
+ *   4. Escurecer elementos fora de foco (outOfFocusAnimation)
  *   5. Notificar mudanças via callback `onChange`
+ *   6. Animar o viewBox com GSAP (`gsap.to`)
  *
  * Referência: GUIA_REPLICACAO_SVG_NAVIGATOR.md §10
  * ═══════════════════════════════════════════════════════════════════════
@@ -167,6 +168,27 @@ export function useNavigator({
       const outOfFocusElements =
         svgElement.querySelectorAll(outOfFocusSelector);
 
+      // ═══════════════════════════════════════════════
+      // 3. BLINDAGEM DE EVENTOS DOM
+      // ═══════════════════════════════════════════════
+      // Aplicada imperativamante ANTES de qualquer tween,
+      // cobrindo também o outOfFocusAnimation abaixo.
+      //
+      //   a) lockInteraction → o handler de mousemove de
+      //      useHoverEffects aborta na primeira linha.
+      //   b) pointerEvents: "none" directo no style → o
+      //      browser para imediatamente de calcular CSS
+      //      :hover e de propagar eventos em todo o
+      //      sub-tree SVG durante a transição.
+      //   c) killTweensOf → limpa tweens de hover residuais
+      //      para que o GSAP foque 100% no viewBox.
+      lockInteractionRef.current = true;
+      svgElement.style.pointerEvents = "none";
+      gsap.killTweensOf(svgElement.querySelectorAll('[id*="--"]'));
+
+      // ═══════════════════════════════════════════════
+      // 4. ISOLAMENTO VISUAL (ESCURECER FORA DE FOCO)
+      // ═══════════════════════════════════════════════
       // Reverte a animação anterior para não sobrepor filtros
       if (outOfFocusAnimationRef.current) {
         outOfFocusAnimationRef.current.revert();
@@ -181,43 +203,34 @@ export function useNavigator({
       }
 
       // ═══════════════════════════════════════════════
-      // 4. NOTIFICAR MUDANÇA (breadcrumb, etc.)
+      // 5. NOTIFICAR MUDANÇA (breadcrumb, etc.)
       // ═══════════════════════════════════════════════
       const [identifier, hierarchy] =
         getElementIdentifierWithHierarchy(id);
       onChange(identifier, hierarchy);
 
       // ═══════════════════════════════════════════════
-      // 5. ANIMAR O VIEWBOX (A "CÂMERA")
+      // 6. ANIMAR O VIEWBOX (A "CÂMERA")
       // ═══════════════════════════════════════════════
-      // Bloqueia interação durante a animação para
-      // evitar double-clicks e race conditions.
-      lockInteractionRef.current = true;
-
-      gsap.fromTo(
-        svgElement,
-        // Estado inicial: bloqueia pointer events imediatamente
-        { pointerEvents: "none" },
-        {
-          // Anima o atributo viewBox nativamente — o browser
-          // recalcula toda a projeção a cada frame.
-          attr: { viewBox },
-          duration: ANIMATION_DURATION,
-          ease: ANIMATION_EASE,
-          onComplete: () => {
-            // Restaura pointer events e desbloqueia interação
-            gsap.set(svgElement, {
-              pointerEvents: "auto",
-              onComplete: () => {
-                // Restaura brilho dos filhos do elemento alvo
-                setFullBrightnessToCurrentLevel(toPrevious);
-                lockInteractionRef.current = false;
-                callback?.();
-              },
-            });
-          },
+      // pointerEvents já está "none" — o browser não
+      // processa colisões de rato durante este tween.
+      gsap.to(svgElement, {
+        attr: { viewBox },
+        duration: ANIMATION_DURATION,
+        ease: ANIMATION_EASE,
+        onComplete: () => {
+          // Restaura pointer events e desbloqueia interação
+          gsap.set(svgElement, {
+            pointerEvents: "auto",
+            onComplete: () => {
+              // Restaura brilho dos filhos do elemento alvo
+              setFullBrightnessToCurrentLevel(toPrevious);
+              lockInteractionRef.current = false;
+              callback?.();
+            },
+          });
         },
-      );
+      });
     },
     [svgElement, historyLevelRef, lockInteractionRef, currentLevelRef, currentElementIdRef, currentTheme, onChange, getElementIdentifierWithHierarchy, setFullBrightnessToCurrentLevel, originalViewBoxRef],
   );

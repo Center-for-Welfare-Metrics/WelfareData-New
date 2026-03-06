@@ -14,9 +14,7 @@ O `useSvgNavigatorLogic` é o **hook orquestrador** que compõe os 3 hooks inter
 │     onClose: () => { limpa seleção },                              │
 │   })                                                               │
 │     │                                                              │
-│     ├── updateSvgElement(svgEl) → passa ao ProcessogramViewer      │
-│     ├── onMouseMove(e)          → passa ao ProcessogramViewer      │
-│     └── onMouseLeave()          → passa ao ProcessogramViewer      │
+│     └── updateSvgElement(svgEl) → passa ao ProcessogramViewer      │
 │                                                                    │
 └────────────────────────────────────────────────────────────────────┘
                            │
@@ -24,9 +22,8 @@ O `useSvgNavigatorLogic` é o **hook orquestrador** que compõe os 3 hooks inter
 ┌────────────────────────────────────────────────────────────────────┐
 │                   useSvgNavigatorLogic.ts                           │
 │                                                                    │
-│   Estado:                                                          │
-│     svgElement     (useState)                                      │
-│     onHover        (useState)                                      │
+│   Estado React:                                                    │
+│     svgElement     (useState)  ← único state; regista o <svg> DOM  │
 │                                                                    │
 │   Refs mutáveis (sufixo Ref — React Compiler):                    │
 │     historyLevelRef       → HistoryLevel                           │
@@ -44,9 +41,11 @@ O `useSvgNavigatorLogic` é o **hook orquestrador** que compõe os 3 hooks inter
 │     │ useClickHandler  │ → handleClick() [window listener]         │
 │     └────────┬────────┘                                            │
 │              │                                                     │
-│     ┌────────▼────────┐                                            │
-│     │ useHoverEffects  │ → efeito visual (side-effect)             │
-│     └─────────────────┘                                            │
+│     ┌────────▼────────────────────────────────────────────────┐   │
+│     │ useHoverEffects  (Event Delegation — zero re-renders)   │   │
+│     │   Regista os próprios mousemove/mouseleave no svgElement │   │
+│     │   O React nunca é notificado do movimento do rato       │   │
+│     └─────────────────────────────────────────────────────────┘   │
 │                                                                    │
 │   Helpers internos:                                                │
 │     getElementIdentifierWithHierarchy(id) → [string, hierarchy]    │
@@ -80,12 +79,15 @@ O `useSvgNavigatorLogic` é o **hook orquestrador** que compõe os 3 hooks inter
    - Anima o `viewBox` com `gsap.fromTo`
    - No `onComplete`: restaura brilho + desbloqueia interação
 
-### 3. Hover
-1. `onMouseMove` (no wrapper do SVG) → `target.closest("[id*='--xx' i]")` → `setOnHover(id)`
-2. `useHoverEffects` reage via `useEffect(onHover)`:
-   - Hovered → `brightness(1)` / `grayscale(0)`
-   - Irmãos → `brightness(0.3)` / `grayscale(1)`
-3. `onMouseLeave` → `setOnHover(null)` → restaura estado padrão do nível
+### 3. Hover (Event Delegation — zero re-renders)
+1. `useHoverEffects` regista directamente **um** `mousemove` e **um** `mouseleave` no `svgElement` (dentro de `useEffect([svgElement])`)
+2. `mousemove` handler (DOM nativo, sem React):
+   - `lockInteraction.current? → return` (câmara em animação)
+   - `target.closest("[id*='--xx' i]")` para o **próximo nível** — `INVERSE_DICT[currentLevel + 1]`
+   - `group.id === hoveredElementId.current? → return` (sem spam GSAP no mesmo pixel)
+   - Novo grupo → `hoveredElementId.current = id` → GSAP `brightness(1)` / `grayscale(0)` no hovered, `brightness(0.3)` / `grayscale(1)` nos irmãos
+3. `mouseleave` handler → `clearHover()`: restaura o estado de navegação baseado no nível actual da câmara
+4. Tema lido via `themeRef` (ref interno) — sem re-registo dos listeners a cada troca de tema
 
 ### 4. Drill-Up (clique no vazio ou auto-click)
 1. `handleClick` não encontra `<g>` semântico via `closest()`, **ou** `clickedStage.id === currentElementIdRef` (auto-click guard)
@@ -112,7 +114,7 @@ O navigator usa `HierarchyItem` (tipos internos). A UI (breadcrumb, SidePanel) u
 |---|---|---|
 | `navigator/useSvgNavigatorLogic.ts` | **Criado** | Hook orquestrador central |
 | `navigator/index.ts` | **Atualizado** | Exporta o orquestrador |
-| `ProcessogramViewer.tsx` | **Atualizado** | Aceita `onMouseMove`/`onMouseLeave` |
+| `ProcessogramViewer.tsx` | **Atualizado** | Recebe apenas `onSvgReady`; hover gerido internamente |
 | `page.tsx` | **Atualizado** | Usa `useSvgNavigatorLogic` em vez de `useProcessogramState` |
 | `docs/frontend/svg_navigation_orchestrator.md` | **Criado** | Esta documentação |
 

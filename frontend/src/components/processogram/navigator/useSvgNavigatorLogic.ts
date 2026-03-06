@@ -9,17 +9,19 @@
  *
  * Responsabilidades:
  *   1. Criar e gerenciar todos os refs mutáveis (history, level, lock, id)
- *   2. Criar e gerenciar o estado de hover (onHover)
- *   3. Instanciar os 3 hooks na ordem correta de dependência
- *   4. Registrar o click listener global no `window`
- *   5. Expor onMouseMove / onMouseLeave para o componente de SVG
- *   6. Expor updateSvgElement para receber a ref do SVG do react-inlinesvg
+ *   2. Instanciar os 3 hooks na ordem correta de dependência
+ *   3. Registrar o click listener global no `window`
+ *   4. Expor updateSvgElement para receber a ref do SVG do react-inlinesvg
+ *   5. Expor navigateToLevel para navegação programática (breadcrumb / Home)
+ *
+ * Após a Otimização Nível 1 (Event Delegation), os handlers de mouse
+ * (onMouseMove / onMouseLeave) foram eliminados. O `useHoverEffects`
+ * regista os seus próprios listeners DOM directamente no `svgElement`;
+ * o React nunca é notificado do movimento do rato.
  *
  * O consumidor (ProcessogramViewer) não precisa conhecer os hooks
  * internos — apenas chama:
- *   - updateSvgElement(svgEl)     → após react-inlinesvg injetar o <svg>
- *   - onMouseMove={onMouseMove}   → no wrapper do SVG
- *   - onMouseLeave={onMouseLeave} → no wrapper do SVG
+ *   - updateSvgElement(svgEl)  → após react-inlinesvg injetar o <svg>
  *
  * Referência: GUIA_REPLICACAO_SVG_NAVIGATOR.md §9 (Passo 9)
  * ═══════════════════════════════════════════════════════════════════════
@@ -74,18 +76,6 @@ export interface UseSvgNavigatorLogicReturn {
   updateSvgElement: (svgEl: SVGSVGElement) => void;
 
   /**
-   * Handler de mouse move — deve ser passado ao wrapper do SVG.
-   * Detecta o grupo semântico sob o cursor e ativa o hover visual.
-   */
-  onMouseMove: (e: React.MouseEvent) => void;
-
-  /**
-   * Handler de mouse leave — deve ser passado ao wrapper do SVG.
-   * Limpa o hover visual quando o cursor sai do SVG.
-   */
-  onMouseLeave: () => void;
-
-  /**
    * Navegação programática para um nível específico do histórico.
    * Usado pelo breadcrumb e pelo botão Home.
    *
@@ -108,9 +98,6 @@ export function useSvgNavigatorLogic({
 
   /** Referência ao <svg> DOM injetado pelo react-inlinesvg. */
   const [svgElement, setSvgElement] = useState<SVGElement | null>(null);
-
-  /** ID do elemento sob o cursor (para efeitos de hover). */
-  const [onHover, setOnHover] = useState<string | null>(null);
 
   // ═══════════════════════════════════════════════════
   // 2. REFS MUTÁVEIS (React Compiler: sufixo Ref)
@@ -236,7 +223,6 @@ export function useSvgNavigatorLogic({
   const { handleClick } = useClickHandler({
     svgElement,
     changeLevelTo,
-    setOnHover,
     onClose,
     lockInteractionRef,
     currentLevelRef,
@@ -244,10 +230,12 @@ export function useSvgNavigatorLogic({
     historyLevelRef,
   });
 
-  // 4c. Efeitos visuais de hover (focus/mute por brightness/grayscale)
+  // 4c. Efeitos visuais de hover (Event Delegation nativa — zero re-renders)
+  //     Os listeners de mousemove/mouseleave são registados directamente no
+  //     svgElement; o React não é envolvido no ciclo de hover.
   useHoverEffects({
     svgElement,
-    onHover,
+    lockInteraction: lockInteractionRef,
     currentLevelRef,
     currentElementIdRef,
     currentTheme,
@@ -273,47 +261,6 @@ export function useSvgNavigatorLogic({
   // ═══════════════════════════════════════════════════
   // 6. HANDLERS DE MOUSE PARA O SVG
   // ═══════════════════════════════════════════════════
-
-  /**
-   * Mouse move no wrapper do SVG:
-   * - Detecta o grupo semântico sob o cursor no PRÓXIMO nível
-   *   (para pré-visualizar o drill-down)
-   * - Se o cursor não está sobre nenhum grupo, limpa o hover
-   */
-  const onMouseMove = useCallback(
-    (e: React.MouseEvent) => {
-      if (!svgElement) return;
-      if (lockInteractionRef.current) return;
-
-      const target = e.target as SVGElement;
-      const nextLevelKey = INVERSE_DICT[currentLevelRef.current + 1];
-
-      if (!nextLevelKey) {
-        // Nível máximo — não há sub-grupos para hover
-        setOnHover(null);
-        return;
-      }
-
-      // Sobe na árvore DOM até achar o grupo do próximo nível
-      const hovered = target.closest<SVGElement>(
-        `[id*="${nextLevelKey}" i]`,
-      );
-
-      if (hovered) {
-        setOnHover(hovered.id);
-      } else {
-        setOnHover(null);
-      }
-    },
-    [svgElement],
-  );
-
-  /**
-   * Mouse leave do wrapper do SVG: limpa hover.
-   */
-  const onMouseLeave = useCallback(() => {
-    setOnHover(null);
-  }, []);
 
   // ═══════════════════════════════════════════════════
   // 7. REGISTRAR O SVG ELEMENT
@@ -354,7 +301,11 @@ export function useSvgNavigatorLogic({
 
       // ── RESET TOTAL (Home / fechar) ──
       if (levelIndex < 0) {
+        // Blindagem de eventos DOM — mesma lógica de changeLevelTo:
+        // lock + pointerEvents imperativo + kill de tweens residuais.
         lockInteractionRef.current = true;
+        svgElement.style.pointerEvents = "none";
+        gsap.killTweensOf(svgElement.querySelectorAll('[id*="--"]'));
 
         // Reverte todos os filtros visuais (escurecimento)
         const allFiltered = svgElement.querySelectorAll('[id*="--"]');
@@ -441,8 +392,6 @@ export function useSvgNavigatorLogic({
 
   return {
     updateSvgElement,
-    onMouseMove,
-    onMouseLeave,
     navigateToLevel,
   };
 }

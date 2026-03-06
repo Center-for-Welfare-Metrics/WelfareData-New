@@ -1,23 +1,38 @@
 /**
  * ═══════════════════════════════════════════════════════════════════════
- * SVG Navigator — Hook de Efeitos de Hover
+ * SVG Navigator — Hook de Efeitos de Hover (Nível 1 de Otimização)
  * ═══════════════════════════════════════════════════════════════════════
  *
- * Gerencia o isolamento visual baseado na posição do cursor:
+ * Motor de hover de zero re-renders: usa Event Delegation nativa no
+ * `svgElement` para mover toda a lógica de hover completamente fora
+ * do ciclo de reconciliação do React. O React nunca sabe que o rato
+ * se moveu — apenas o GSAP e o DOM interagem.
  *
- *   - Quando o mouse entra num grupo semântico (`onHover = "growing--lf1"`):
- *     → Esse grupo recebe brilho total (FOCUSED_FILTER)
- *     → Os irmãos do mesmo nível escurecem (UNFOCUSED_FILTER)
+ * ARQUITETURA (Event Delegation pura):
+ *   Um único `mousemove` e um único `mouseleave` são registados
+ *   directamente no `<svg>`. `hoveredElementId` (useRef) rastreia
+ *   o grupo activo sem nenhum `useState`.
  *
- *   - Quando o mouse sai (`onHover = null`):
- *     → Restaura o estado padrão baseado no nível atual da câmera
- *     → Irmãos do nível atual → escurecidos
- *     → Elemento atual + filhos do próximo nível → brilho total
+ *   ┌─ mousemove ──────────────────────────────────────────────────────┐
+ *   │  1. lockInteraction? → return  (câmara em animação)             │
+ *   │  2. Resolve nextLevelKey via INVERSE_DICT[currentLevel + 1]     │
+ *   │  3. closest(nextLevelKey) → grupo válido?                       │
+ *   │       não → clearHover() e return                               │
+ *   │       sim → mesmo ID que hoveredElementId? → return (sem spam)  │
+ *   │            → novo ID → actualiza ref + GSAP brilho + unfocused  │
+ *   └──────────────────────────────────────────────────────────────────┘
+ *   ┌─ mouseleave ─────────────────────────────────────────────────────┐
+ *   │  clearHover(): restaura estado de navegação baseado no nível    │
+ *   │  actual da câmara (irmãos escuros, elemento focado com brilho)  │
+ *   └──────────────────────────────────────────────────────────────────┘
  *
- * O sistema NUNCA altera `fill`, `stroke` ou `opacity` dos elementos
- * SVG. Utiliza exclusivamente `filter: brightness()` (dark mode) ou
- * `filter: grayscale()` (light mode) via GSAP para transições suaves,
- * preservando 100% das cores originais do SVG.
+ * Ganho de performance:
+ *   Antes: pixel → setOnHover → re-render React → useEffect → GSAP (~60 renders/s)
+ *   Agora: pixel → handler DOM nativo → GSAP  (0 re-renders)
+ *
+ * O sistema NUNCA altera `fill`, `stroke` ou `opacity`. Utiliza
+ * exclusivamente `filter: brightness()` (dark) ou `filter: grayscale()`
+ * (light) via GSAP para preservar 100% das cores originais do SVG.
  *
  * Referência: GUIA_REPLICACAO_SVG_NAVIGATOR.md §8, §11
  * ═══════════════════════════════════════════════════════════════════════
@@ -25,7 +40,7 @@
 
 "use client";
 
-import { type RefObject, useEffect } from "react";
+import { type RefObject, useEffect, useRef } from "react";
 import { gsap } from "gsap";
 import { getLevelNumberById } from "../extractInfoFromId";
 import {
@@ -43,18 +58,19 @@ export interface UseHoverEffectsProps {
   svgElement: SVGElement | null;
 
   /**
-   * ID do elemento sob o cursor, ou `null` se o mouse não está
-   * sobre nenhum grupo semântico.
+   * Flag de trava partilhada com o motor de câmara (`useNavigator`).
+   * Quando `true`, o handler de `mousemove` aborta imediatamente para
+   * não sobrepor filtros de hover durante uma animação de viewBox.
    */
-  onHover: string | null;
+  lockInteraction: RefObject<boolean>;
 
-  /** Nível numérico atual da câmera (0–3). */
+  /** Nível numérico actual da câmara (0–3). */
   currentLevelRef: RefObject<number>;
 
-  /** ID do elemento atualmente enquadrado pela câmera. */
+  /** ID do elemento actualmente enquadrado pela câmara. */
   currentElementIdRef: RefObject<string | null>;
 
-  /** Tema visual atual ("dark" ou "light"). */
+  /** Tema visual actual ("dark" ou "light"). */
   currentTheme: "dark" | "light";
 }
 
@@ -62,89 +78,134 @@ export interface UseHoverEffectsProps {
 
 export function useHoverEffects({
   svgElement,
-  onHover,
+  lockInteraction,
   currentLevelRef,
   currentElementIdRef,
   currentTheme,
 }: UseHoverEffectsProps): void {
+  /**
+   * Rastreia o ID do grupo actualmente sob o cursor.
+   * Ref mutável — jamais provoca re-renders ao mudar.
+   */
+  const hoveredElementId = useRef<string | null>(null);
+
+  /**
+   * Mantém o tema acessível dentro dos handlers DOM nativos,
+   * sem necessidade de re-registar os listeners a cada troca de tema.
+   */
+  const themeRef = useRef(currentTheme);
+  useEffect(() => {
+    themeRef.current = currentTheme;
+  }, [currentTheme]);
+
   useEffect(() => {
     if (!svgElement) return;
 
-    // Duração mais curta para hover — resposta tátil rápida
+    // Captura o elemento no momento do registo — garantidamente não-nulo
+    const svg = svgElement;
     const halfDuration = ANIMATION_DURATION / 2;
 
-    if (!onHover) {
-      // ══════════════════════════════════════════
-      // MOUSE SAIU: restaura o estado padrão
-      // ══════════════════════════════════════════
-      // O "estado padrão" depende do nível atual da câmera:
-      //   - O elemento enquadrado e os filhos do próximo nível → FOCUSED
-      //   - Os irmãos do nível atual → UNFOCUSED
+    /**
+     * Restaura o estado visual de navegação (sem hover activo):
+     *   - Irmãos do nível actual → UNFOCUSED
+     *   - Elemento enquadrado + filhos do próximo nível → FOCUSED
+     *
+     * Guard: aborta silenciosamente se já não havia hover activo.
+     */
+    function clearHover(): void {
+      if (hoveredElementId.current === null) return;
+      hoveredElementId.current = null;
+
       const currentId = currentElementIdRef.current;
       const level = getLevelNumberById(currentId);
       const levelKey = INVERSE_DICT[level];
       const nextLevelKey = INVERSE_DICT[level + 1];
+      const theme = themeRef.current;
 
       if (levelKey) {
-        // Irmãos do nível atual → escurece (volta ao estado de navegação)
-        const siblings = svgElement.querySelectorAll(
+        const siblings = svg.querySelectorAll(
           `[id*="${levelKey}" i]:not([id="${currentId}"])`,
         );
         if (siblings.length > 0) {
           gsap.to(siblings, {
-            filter: UNFOCUSED_FILTER[currentTheme],
+            filter: UNFOCUSED_FILTER[theme],
             duration: halfDuration,
             ease: ANIMATION_EASE,
           });
         }
       }
 
-      // Elemento atual + filhos do próximo nível → brilho total
+      // Elemento enquadrado + filhos do próximo nível → brilho total
       const focusedSelector = nextLevelKey
         ? `[id="${currentId}"],[id*="${nextLevelKey}" i]`
         : `[id="${currentId}"]`;
-
-      const focused = svgElement.querySelectorAll(focusedSelector);
+      const focused = svg.querySelectorAll(focusedSelector);
       if (focused.length > 0) {
         gsap.to(focused, {
-          filter: FOCUSED_FILTER[currentTheme],
+          filter: FOCUSED_FILTER[theme],
           duration: halfDuration,
           ease: ANIMATION_EASE,
         });
       }
-
-      return;
     }
 
-    // ══════════════════════════════════════════
-    // HOVER ATIVO: destaca o grupo sob o cursor
-    // ══════════════════════════════════════════
+    function handleMouseMove(e: MouseEvent): void {
+      // ── LOCK: câmara em animação → aborta imediatamente ──
+      if (lockInteraction.current) return;
 
-    // Elemento hovered → brilho total
-    const hovered = svgElement.querySelectorAll(`[id="${onHover}"]`);
-    if (hovered.length > 0) {
-      gsap.to(hovered, {
-        filter: FOCUSED_FILTER[currentTheme],
+      // Resolve o sufixo do próximo nível navegável
+      const nextLevelKey = INVERSE_DICT[currentLevelRef.current + 1];
+      if (!nextLevelKey) return; // Nível folha — sem sub-grupos para hover
+
+      const target = e.target as Element;
+      const group = target.closest<SVGElement>(`[id*="${nextLevelKey}" i]`);
+
+      if (!group) {
+        // Cursor fora de qualquer grupo válido → limpa hover
+        clearHover();
+        return;
+      }
+
+      // Mesmo grupo — evita spam de animações GSAP no mesmo pixel
+      if (group.id === hoveredElementId.current) return;
+
+      // ── NOVO GRUPO: actualiza rastreador e aplica efeitos visuais ──
+      hoveredElementId.current = group.id;
+      const theme = themeRef.current;
+
+      // Grupo hovered → brilho total
+      gsap.to(group, {
+        filter: FOCUSED_FILTER[theme],
         duration: halfDuration,
         ease: ANIMATION_EASE,
       });
-    }
 
-    // Irmãos do mesmo nível → escurecidos
-    const hoverLevel = getLevelNumberById(onHover);
-    const levelKey = INVERSE_DICT[hoverLevel];
-
-    if (levelKey) {
-      const notHovered = svgElement.querySelectorAll(
-        `[id*="${levelKey}" i]:not([id="${onHover}"])`,
+      // Irmãos do mesmo nível → escurecidos
+      const notHovered = svg.querySelectorAll(
+        `[id*="${nextLevelKey}" i]:not([id="${group.id}"])`,
       );
       if (notHovered.length > 0) {
         gsap.to(notHovered, {
-          filter: UNFOCUSED_FILTER[currentTheme],
+          filter: UNFOCUSED_FILTER[theme],
           duration: halfDuration,
           ease: ANIMATION_EASE,
         });
       }
     }
-  }, [onHover, svgElement, currentLevelRef, currentElementIdRef, currentTheme]);
+
+    function handleMouseLeave(): void {
+      clearHover();
+    }
+
+    svg.addEventListener("mousemove", handleMouseMove);
+    svg.addEventListener("mouseleave", handleMouseLeave);
+
+    return () => {
+      svg.removeEventListener("mousemove", handleMouseMove);
+      svg.removeEventListener("mouseleave", handleMouseLeave);
+    };
+  }, [svgElement]); // eslint-disable-line react-hooks/exhaustive-deps
+  // ↑ Regista os listeners apenas quando o SVG muda.
+  //   lockInteraction, currentLevelRef, currentElementIdRef são refs estáveis.
+  //   currentTheme é lido via themeRef — sem necessidade de re-registar.
 }

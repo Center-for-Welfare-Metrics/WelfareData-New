@@ -33,18 +33,6 @@ export interface ProcessogramViewerProps {
    * O orquestrador (useSvgNavigatorLogic) registra o elemento por aqui.
    */
   onSvgReady?: (svgElement: SVGSVGElement) => void;
-
-  /**
-   * Handler de mouse move do orquestrador.
-   * Detecta grupos semânticos sob o cursor para efeito de hover.
-   */
-  onMouseMove?: (e: React.MouseEvent) => void;
-
-  /**
-   * Handler de mouse leave do orquestrador.
-   * Limpa o hover quando o cursor sai do SVG.
-   */
-  onMouseLeave?: () => void;
 }
 
 // ─── Componente ────────────────────────────────────────────────────────
@@ -52,8 +40,6 @@ export interface ProcessogramViewerProps {
 export function ProcessogramViewer({
   svgUrl,
   onSvgReady,
-  onMouseMove,
-  onMouseLeave,
 }: ProcessogramViewerProps) {
   /**
    * O react-inlinesvg chama `innerRef` com o <svg> DOM real
@@ -83,8 +69,6 @@ export function ProcessogramViewer({
       animate={{ opacity: 1 }}
       transition={{ duration: 0.4 }}
       className="processogram-svg-container relative size-full overflow-visible bg-background"
-      onMouseMove={onMouseMove}
-      onMouseLeave={onMouseLeave}
     >
       <SVG
         src={svgUrl}
