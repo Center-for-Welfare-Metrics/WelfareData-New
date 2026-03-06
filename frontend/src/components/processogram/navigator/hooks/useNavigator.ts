@@ -81,6 +81,23 @@ export interface UseNavigatorProps {
    * durante o cálculo de BBox em drill-up.
    */
   originalViewBoxRef: RefObject<string | null>;
+
+  /**
+   * Restaura todos os elementos rasterizados antes de iniciar nova transição.
+   * Garante que o DOM está limpo antes dos querySelector de outOfFocusSelector.
+   * Opcional — o motor de câmara funciona sem o optimizador.
+   */
+  restoreAllRasterized?: () => void;
+
+  /**
+   * Agenda a rasterização dos elementos fora de foco após a transição.
+   * O setTimeout(0) interno liberta o frame actual para o GSAP.
+   * Opcional — o motor de câmara funciona sem o optimizador.
+   */
+  optimizeLevelElements?: (
+    currentElement: SVGElement,
+    outOfFocusElements: NodeListOf<Element>,
+  ) => void;
 }
 
 // ─── Return Type ───────────────────────────────────────────────────────
@@ -113,6 +130,8 @@ export function useNavigator({
   getElementIdentifierWithHierarchy,
   setFullBrightnessToCurrentLevel,
   originalViewBoxRef,
+  restoreAllRasterized,
+  optimizeLevelElements,
 }: UseNavigatorProps): UseNavigatorReturn {
   /**
    * Ref para a animação de escurecimento dos irmãos fora de foco.
@@ -124,6 +143,14 @@ export function useNavigator({
   const changeLevelTo = useCallback(
     (target: SVGElement, toPrevious: boolean, callback?: () => void) => {
       if (!svgElement) return;
+
+      // ═══════════════════════════════════════════════
+      // 0. RESTAURAR RASTERIZAÇÕES ANTERIORES
+      // ═══════════════════════════════════════════════
+      // Garante DOM limpo antes dos querySelector de outOfFocusSelector.
+      // Os <g> substituídos por <image> voltam a ser vectoriais para
+      // que os selectores CSS os encontrem correctamente.
+      restoreAllRasterized?.();
 
       // ═══════════════════════════════════════════════
       // 1. CALCULAR O VIEWBOX DESTINO
@@ -210,6 +237,15 @@ export function useNavigator({
       onChange(identifier, hierarchy);
 
       // ═══════════════════════════════════════════════
+      // 5.5. RASTERIZAÇÃO DINÂMICA (Otimização Nível 2)
+      // ═══════════════════════════════════════════════
+      // Agenda a conversão dos outOfFocusElements de vectorial para
+      // bitmap PNG. O setTimeout(0) interno liberta o frame actual
+      // para o GSAP iniciar a animação do viewBox sem interrupções.
+      // O target é restaurado para 100% vectorial (nítido no zoom).
+      optimizeLevelElements?.(target, outOfFocusElements);
+
+      // ═══════════════════════════════════════════════
       // 6. ANIMAR O VIEWBOX (A "CÂMERA")
       // ═══════════════════════════════════════════════
       // pointerEvents já está "none" — o browser não
@@ -232,7 +268,7 @@ export function useNavigator({
         },
       });
     },
-    [svgElement, historyLevelRef, lockInteractionRef, currentLevelRef, currentElementIdRef, currentTheme, onChange, getElementIdentifierWithHierarchy, setFullBrightnessToCurrentLevel, originalViewBoxRef],
+    [svgElement, historyLevelRef, lockInteractionRef, currentLevelRef, currentElementIdRef, currentTheme, onChange, getElementIdentifierWithHierarchy, setFullBrightnessToCurrentLevel, originalViewBoxRef, restoreAllRasterized, optimizeLevelElements],
   );
 
   return { changeLevelTo };

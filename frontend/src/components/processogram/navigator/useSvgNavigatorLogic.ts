@@ -35,6 +35,7 @@ import { gsap } from "gsap";
 import { useNavigator } from "./hooks/useNavigator";
 import { useClickHandler } from "./hooks/useClickHandler";
 import { useHoverEffects } from "./hooks/useHoverEffects";
+import { useOptimizeSvgParts } from "./hooks/useOptimizeSvgParts";
 import { getHierarchy, getElementIdentifier } from "./hierarchy";
 import {
   FOCUSED_FILTER,
@@ -205,7 +206,15 @@ export function useSvgNavigatorLogic({
   // 4. COMPOSIÇÃO DOS HOOKS INTERNOS
   // ═══════════════════════════════════════════════════
 
-  // 4a. Motor de câmera (viewBox + isolamento visual)
+  // 4a. Motor de rasterização dinâmica (Otimização Nível 2)
+  //     Deve ser instanciado ANTES de useNavigator para que
+  //     optimizeLevelElements e restoreAllRasterized possam
+  //     ser injectados no motor de câmara (4b).
+  const { optimizeLevelElements, restoreAllRasterized } = useOptimizeSvgParts({
+    svgElement,
+  });
+
+  // 4b. Motor de câmera (viewBox + isolamento visual)
   const { changeLevelTo } = useNavigator({
     svgElement,
     historyLevelRef,
@@ -217,9 +226,11 @@ export function useSvgNavigatorLogic({
     getElementIdentifierWithHierarchy,
     setFullBrightnessToCurrentLevel,
     originalViewBoxRef,
+    optimizeLevelElements,
+    restoreAllRasterized,
   });
 
-  // 4b. Interceptação de cliques (drill-down / drill-up / close)
+  // 4c. Interceptação de cliques (drill-down / drill-up / close)
   const { handleClick } = useClickHandler({
     svgElement,
     changeLevelTo,
@@ -230,7 +241,7 @@ export function useSvgNavigatorLogic({
     historyLevelRef,
   });
 
-  // 4c. Efeitos visuais de hover (Event Delegation nativa — zero re-renders)
+  // 4d. Efeitos visuais de hover (Event Delegation nativa — zero re-renders)
   //     Os listeners de mousemove/mouseleave são registados directamente no
   //     svgElement; o React não é envolvido no ciclo de hover.
   useHoverEffects({
@@ -301,6 +312,11 @@ export function useSvgNavigatorLogic({
 
       // ── RESET TOTAL (Home / fechar) ──
       if (levelIndex < 0) {
+        // Restaura elementos rasterizados antes de qualquer animação:
+        // os <g> voltam a ser vectoriais para que os tweens GSAP os
+        // encontrem correctamente.
+        restoreAllRasterized();
+
         // Blindagem de eventos DOM — mesma lógica de changeLevelTo:
         // lock + pointerEvents imperativo + kill de tweens residuais.
         lockInteractionRef.current = true;
@@ -383,7 +399,7 @@ export function useSvgNavigatorLogic({
 
       changeLevelTo(element, true);
     },
-    [svgElement, changeLevelTo, currentTheme, onClose],
+    [svgElement, changeLevelTo, currentTheme, onClose, restoreAllRasterized],
   );
 
   // ═══════════════════════════════════════════════════

@@ -125,6 +125,7 @@ export class SvgProcessorService implements ISvgProcessor {
   private async launchBrowser(): Promise<Browser> {
     return puppeteer.launch({
       headless: true,
+      executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
       protocolTimeout: PROTOCOL_TIMEOUT_MS,
       args: [
         '--no-sandbox',
