@@ -67,6 +67,15 @@ export type {
 export { useHoverEffects } from "./hooks/useHoverEffects";
 export type { UseHoverEffectsProps } from "./hooks/useHoverEffects";
 
+export { usePrefetchRaster } from "./hooks/usePrefetchRaster";
+export type { UsePrefetchRasterReturn } from "./hooks/usePrefetchRaster";
+
+export { useOptimizeSvgParts } from "./hooks/useOptimizeSvgParts";
+export type {
+  UseOptimizeSvgPartsProps,
+  UseOptimizeSvgPartsReturn,
+} from "./hooks/useOptimizeSvgParts";
+
 // Orquestrador (Etapa 5)
 export { useSvgNavigatorLogic } from "./useSvgNavigatorLogic";
 export type {

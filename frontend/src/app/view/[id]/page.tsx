@@ -120,6 +120,21 @@ export default function PublicViewPage() {
     setActiveElementData(null);
   }, []);
 
+  // ─── Raster Images para LOD via PNG Swap ────────────────────────────
+  //
+  // Selecciona os metadados de rasterização do tema actual.
+  // Alimenta o usePrefetchRaster (prefetch silencioso) e o
+  // useOptimizeSvgParts (motor de Swap O(1)).
+  // Quando `state.status !== "ready"`, é `undefined` — os hooks
+  // internos fazem early return silencioso.
+
+  const rasterImages =
+    state.status === "ready"
+      ? currentTheme === "dark"
+        ? state.processogram.raster_images_dark
+        : state.processogram.raster_images_light
+      : undefined;
+
   // ─── Orquestrador (System B) ─────────────────────────────────────────
 
   const { updateSvgElement, navigateToLevel } =
@@ -127,6 +142,7 @@ export default function PublicViewPage() {
       currentTheme,
       onChange: handleNavigatorChange,
       onClose: handleNavigatorClose,
+      rasterImages,
     });
 
   // ─── Callbacks da UI ─────────────────────────────────────────────────

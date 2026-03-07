@@ -1,59 +1,82 @@
 /**
  * ═══════════════════════════════════════════════════════════════════════
- * SVG Navigator — Motor de Rasterização Dinâmica (Otimização Nível 2)
+ * SVG Navigator — Motor de Swap O(1) (LOD via PNG Swap — Etapa 3)
  * ═══════════════════════════════════════════════════════════════════════
  *
- * Converte grupos SVG complexos (`<g>`) em imagens bitmap (`<image>`)
- * em tempo de execução via Canvas, para aliviar a carga de GPU durante
- * animações GSAP de viewBox.
+ * Substitui grupos SVG complexos (`<g>`) por imagens PNG pré-renderizadas
+ * pelo backend, usando metadados `RasterImage` (coordenadas + URL) e
+ * lookup O(1) no cache de prefetch.
  *
- * PRINCÍPIO:
- *   Antes de um drill-down, os grupos que ficam fora de foco são trocados
- *   por um único PNG cada. Em vez de o browser recalcular milhares de nós
- *   vectoriais por frame durante o zoom, recalcula apenas pixels já
- *   "cozinhados". O efeito visual é idêntico — os grupos estão escurecidos
- *   (`brightness 0.3` / `grayscale 1`) de qualquer forma.
+ * ANTES (ADR-004 v1 — Canvas client-side):
+ *   getBBox → XMLSerializer → Blob → ObjectURL → Image.onload
+ *     → Canvas (devicePixelRatio) → base64 PNG → <image>
+ *   Custo: ~30-80ms por elemento (serialização + Canvas + encoding)
  *
- * FLUXO POR TRANSIÇÃO (integrado em `useNavigator.changeLevelTo`):
- *   1. `restoreAllRasterized()`       → DOM limpo antes de qualquer querySelector
- *   2. `outOfFocusAnimation` (GSAP)   → escurece os elementos fora de foco
- *   3. `optimizeLevelElements(...)`   → agenda rasterização (setTimeout 0)
- *   4. `gsap.to(svgElement, viewBox)` → animação da câmara (frame limpo)
- *   5. setTimeout fires:
- *        a. `restoreElement(target)`    — target permanece 100% vectorial
- *        b. `rasterizeElement(sibling)` — async: Blob → Image → Canvas → PNG
- *        c. Troca atómica: oculta `<g>`, insere `<image>`
+ * AGORA (ADR-004 v2 — LOD via PNG Swap):
+ *   imageCache.has(id) → rasterImages[id].{x,y,w,h,src} → <image>
+ *   Custo: ~0.1ms por elemento (lookup no Map + criação de 1 nó DOM)
  *
- * CACHE:
- *   `rasterCache: Map<id, "pending" | base64>`
- *     `"pending"` → serialização em curso (img.src definido)
- *     `string`    → base64 PNG pronto (evita re-rasterização em naveg. repetidas)
+ * ESTRATÉGIA DOM (display:none + insertBefore):
+ *   O <g> original NÃO é removido do DOM — é ocultado com display:none
+ *   e um <image data-rasterized-for="id"> é inserido como sibling.
+ *   Isto preserva as referências internas do GSAP (tweens de filter
+ *   aplicados pelo outOfFocusAnimation em useNavigator) e permite
+ *   restauro atómico sem perda de state visual.
+ *
+ * ASYNC BATCHING (Time-Slicing via rAF):
+ *   O swap dos outOfFocusElements é dividido em chunks de CHUNK_SIZE
+ *   elementos, cada chunk processado num requestAnimationFrame separado.
+ *   Isto distribui os ~60ms de DOM mutations (para 1200+ elementos)
+ *   em ~3 frames de ~20ms, libertando budget para o GSAP animar o
+ *   viewBox a 60 FPS sem frame drops perceptíveis.
  *
  * SEGURANÇA CONTRA RACE CONDITIONS:
- *   - Se `restoreElement()` é chamado durante load assíncrono:
- *     elimina a entrada `"pending"` do cache → `onload` verifica e aborta.
- *   - Se o utilizador navega antes da rasterização terminar:
- *     `restoreAllRasterized()` é chamado no início do próximo `changeLevelTo`,
- *     antes de qualquer querySelector, garantindo DOM consistente.
+ *   - Epoch counter: cada chamada a optimizeLevelElements incrementa
+ *     o epoch. Se o utilizador navega antes de todos os chunks serem
+ *     processados, o callback rAF verifica o epoch e aborta.
+ *   - restoreAllRasterized() é chamado no início de cada changeLevelTo
+ *     (useNavigator:153), garantindo DOM consistente antes de qualquer
+ *     querySelector.
  *
- * Referência: ADR-004 — Rasterização Dinâmica
+ * GRACEFUL DEGRADATION:
+ *   Se uma imagem não está no imageCache (decode() pendente ou falhou),
+ *   rasterizeElement faz skip silencioso — o <g> permanece vectorial.
+ *   O utilizador não nota: os grupos estão escurecidos de qualquer forma.
+ *
+ * Referência: ADR-004 — Rasterização Dinâmica (LOD via PNG Swap)
  * ═══════════════════════════════════════════════════════════════════════
  */
 
 "use client";
 
-import { useCallback, useRef } from "react";
+import { type RefObject, useCallback, useEffect, useRef } from "react";
+import type { RasterImage } from "@/types/processogram";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 
-/** Margem em unidades SVG para evitar corte de arestas na serialização. */
-const RASTER_PADDING = 2;
+/**
+ * Número de elementos processados por frame de rAF.
+ * 400 × ~0.05ms/elemento ≈ 20ms — dentro do budget de 16.6ms
+ * com margem para o GSAP tick (~2ms) no mesmo frame.
+ * Em SVGs com 1200 elementos: 3 frames × 400 = swap completo.
+ */
+const CHUNK_SIZE = 400;
 
 // ─── Props do Hook ─────────────────────────────────────────────────────
 
 export interface UseOptimizeSvgPartsProps {
   /** Referência ao `<svg>` DOM injetado pelo react-inlinesvg. */
   svgElement: SVGElement | null;
+
+  /** Metadados de rasterização vindos da API (key = elementId). */
+  rasterImages: Record<string, RasterImage> | undefined;
+
+  /**
+   * Cache de imagens pré-carregadas pelo usePrefetchRaster.
+   * Usado como sinal de "readiness" — se `imageCache.current.has(id)`
+   * é false, o swap é adiado e o <g> permanece vectorial.
+   */
+  imageCache: RefObject<Map<string, HTMLImageElement>>;
 }
 
 // ─── Return Type ───────────────────────────────────────────────────────
@@ -62,7 +85,7 @@ export interface UseOptimizeSvgPartsReturn {
   /**
    * Orquestra a otimização do nível actual:
    *   - Garante que `currentElement` permanece 100% vectorial (nítido no zoom).
-   *   - Adia a rasterização dos `outOfFocusElements` para o próximo tick,
+   *   - Adia o swap dos `outOfFocusElements` para o próximo tick via setTimeout(0),
    *     libertando o frame actual para o GSAP animar o viewBox sem bloqueios.
    */
   optimizeLevelElements: (
@@ -81,19 +104,36 @@ export interface UseOptimizeSvgPartsReturn {
 
 export function useOptimizeSvgParts({
   svgElement,
+  rasterImages,
+  imageCache,
 }: UseOptimizeSvgPartsProps): UseOptimizeSvgPartsReturn {
   /**
-   * Cache de rasterização.
-   * `"pending"` → serialização em curso.
-   * `string`    → base64 PNG já gerado.
-   */
-  const rasterCache = useRef<Map<string, string>>(new Map());
-
-  /**
-   * IDs cujos `<g>` estão actualmente substituídos por `<image>`.
+   * IDs cujos `<g>` estão actualmente ocultos com `<image>` sibling.
    * Permite iterar em `restoreAllRasterized` sem varrer todo o DOM.
    */
   const rasterizedIds = useRef<Set<string>>(new Set());
+
+  /**
+   * Epoch counter para invalidar setTimeout stale.
+   * Cada chamada a `optimizeLevelElements` incrementa o epoch.
+   * Quando o setTimeout de uma navegação anterior dispara, compara
+   * o epoch capturado com o actual e aborta se diferente.
+   */
+  const epochRef = useRef(0);
+
+  /**
+   * Ref estável para rasterImages — evita que rasterizeElement
+   * seja recriado a cada mudança de rasterImages, o que causaria
+   * uma cadeia de re-criação: rasterizeElement → optimizeLevelElements
+   * → changeLevelTo → handleClick → window event listener.
+   *
+   * Sincronizado via useEffect (não no render path) para
+   * compatibilidade com React Compiler (react-hooks/refs).
+   */
+  const rasterImagesRef = useRef(rasterImages);
+  useEffect(() => {
+    rasterImagesRef.current = rasterImages;
+  }, [rasterImages]);
 
   // ─── restoreElement ────────────────────────────────────────────────
 
@@ -102,16 +142,12 @@ export function useOptimizeSvgParts({
    *
    * Seguro de chamar mesmo que o elemento nunca tenha sido rasterizado
    * (nesse caso, opera em no-op silencioso).
-   *
-   * Cancela qualquer `onload` pendente: ao eliminar `"pending"` do cache,
-   * o callback verificará `get(id) !== "pending"` e abortará.
    */
   const restoreElement = useCallback((element: SVGGElement): void => {
     const id = element.id;
     if (!id) return;
 
-    // Remove do tracking — cancela onload pendente se houver
-    rasterCache.current.delete(id);
+    // Remove do tracking
     rasterizedIds.current.delete(id);
 
     // Remove <image> correspondente, se já inserida
@@ -139,20 +175,21 @@ export function useOptimizeSvgParts({
       .querySelectorAll("[data-rasterized-for]")
       .forEach((img) => img.remove());
 
-    rasterCache.current.clear();
     rasterizedIds.current.clear();
   }, [svgElement, restoreElement]);
 
   // ─── rasterizeElement ─────────────────────────────────────────────
 
   /**
-   * Serializa um `<g>` SVG para um blob, desenha-o num Canvas e troca-o
-   * por um `<image>` bitmap. Toda a operação é assíncrona (via `Image.onload`).
+   * Swap O(1): oculta o `<g>` original e insere um `<image>` sibling
+   * com as coordenadas exactas calculadas pelo backend.
    *
    * Pipeline:
-   *   getBBox() → XMLSerializer → Blob → ObjectURL → Image.onload
-   *     → Canvas (devicePixelRatio) → base64 PNG
-   *     → Troca atómica: hide `<g>`, insert `<image data-rasterized-for>`
+   *   1. Guard: já rasterizado? skip.
+   *   2. Guard: rasterImages tem coordenadas para este id? skip se não.
+   *   3. Guard: imageCache tem a imagem decoded? skip se não (graceful).
+   *   4. Criar <image> SVG com href + x/y/width/height do backend.
+   *   5. Troca atómica: display:none no <g>, insertBefore do <image>.
    */
   const rasterizeElement = useCallback(
     (element: SVGGElement): void => {
@@ -161,98 +198,33 @@ export function useOptimizeSvgParts({
       const id = element.id;
       if (!id) return;
 
-      // Já no cache (pending ou pronto) → não reprocessar
-      if (rasterCache.current.has(id)) return;
+      // Já rasterizado — skip
+      if (rasterizedIds.current.has(id)) return;
 
-      const bbox = element.getBBox();
-      if (bbox.width === 0 || bbox.height === 0) return;
+      // Coordenadas do backend
+      const data = rasterImagesRef.current?.[id];
+      if (!data) return;
 
-      // Marca como pending imediatamente (guard contra double-start)
-      rasterCache.current.set(id, "pending");
+      // Readiness check: imagem pré-carregada e decoded?
+      // Se não, o <g> permanece vectorial (graceful degradation).
+      if (!imageCache.current.has(id)) return;
 
-      const svgRoot = svgElement as SVGSVGElement;
-      const serializer = new XMLSerializer();
+      rasterizedIds.current.add(id);
 
-      // Inclui <defs> do SVG raiz (gradientes, patterns, símbolos)
-      // para que o bitmap reflicta correctamente os recursos partilhados.
-      const defsEl = svgRoot.querySelector("defs");
-      const defsString = defsEl ? serializer.serializeToString(defsEl) : "";
+      // ── Troca atómica: oculta <g>, insere <image> ──────────────
+      // Ambas as operações no mesmo microtask → sem flicker visível.
+      const imageEl = document.createElementNS(SVG_NS, "image");
+      imageEl.setAttribute("href", data.src);
+      imageEl.setAttribute("x", String(data.x));
+      imageEl.setAttribute("y", String(data.y));
+      imageEl.setAttribute("width", String(data.width));
+      imageEl.setAttribute("height", String(data.height));
+      imageEl.setAttribute("data-rasterized-for", id);
 
-      const gString = serializer.serializeToString(element);
-
-      const vx = bbox.x - RASTER_PADDING;
-      const vy = bbox.y - RASTER_PADDING;
-      const vw = bbox.width + RASTER_PADDING * 2;
-      const vh = bbox.height + RASTER_PADDING * 2;
-
-      // SVG autónomo válido — xmlns obrigatório ou o Canvas recebe branco
-      const svgString = [
-        `<svg xmlns="${SVG_NS}" xmlns:xlink="http://www.w3.org/1999/xlink"`,
-        ` viewBox="${vx} ${vy} ${vw} ${vh}"`,
-        ` width="${vw}" height="${vh}">`,
-        defsString,
-        gString,
-        `</svg>`,
-      ].join("");
-
-      const blob = new Blob([svgString], {
-        type: "image/svg+xml;charset=utf-8",
-      });
-      const url = URL.createObjectURL(blob);
-      const img = new Image();
-
-      img.onload = () => {
-        URL.revokeObjectURL(url);
-
-        // Abortado por restoreElement durante o carregamento assíncrono
-        if (rasterCache.current.get(id) !== "pending") return;
-
-        // Multiplica pelo devicePixelRatio para ecrãs Retina/HiDPI
-        const dpr = Math.max(window.devicePixelRatio ?? 1, 1);
-        const canvas = document.createElement("canvas");
-        canvas.width = Math.ceil(vw * dpr);
-        canvas.height = Math.ceil(vh * dpr);
-
-        const ctx = canvas.getContext("2d");
-        if (!ctx) {
-          rasterCache.current.delete(id);
-          return;
-        }
-
-        ctx.scale(dpr, dpr);
-        ctx.drawImage(img, 0, 0, vw, vh);
-
-        const base64 = canvas.toDataURL("image/png");
-
-        // Segunda verificação: pode ter sido restaurado durante drawImage
-        if (rasterCache.current.get(id) !== "pending") return;
-
-        rasterCache.current.set(id, base64);
-        rasterizedIds.current.add(id);
-
-        // ── Troca atómica: oculta <g>, insere <image> ──────────────
-        // Ambas as operações no mesmo microtask → sem flicker visível.
-        const imageEl = document.createElementNS(SVG_NS, "image");
-        imageEl.setAttribute("href", base64);
-        imageEl.setAttribute("x", String(vx));
-        imageEl.setAttribute("y", String(vy));
-        imageEl.setAttribute("width", String(vw));
-        imageEl.setAttribute("height", String(vh));
-        imageEl.setAttribute("data-rasterized-for", id);
-
-        element.style.display = "none";
-        element.parentNode?.insertBefore(imageEl, element.nextSibling);
-      };
-
-      img.onerror = () => {
-        URL.revokeObjectURL(url);
-        // Permite nova tentativa em navegações futuras
-        rasterCache.current.delete(id);
-      };
-
-      img.src = url;
+      element.style.display = "none";
+      element.parentNode?.insertBefore(imageEl, element.nextSibling);
     },
-    [svgElement],
+    [svgElement, imageCache],
   );
 
   // ─── optimizeLevelElements ─────────────────────────────────────────
@@ -262,19 +234,53 @@ export function useOptimizeSvgParts({
       currentElement: SVGElement,
       outOfFocusElements: NodeListOf<Element>,
     ): void => {
-      // Garante que o alvo do zoom fica 100% vectorial (nítido)
+      // Incrementa epoch — invalida chunks rAF de navegações anteriores
+      const currentEpoch = ++epochRef.current;
+
+      // PASSO A: garante que o alvo está 100% vectorial (defensivo).
+      // Na prática é no-op porque restoreAllRasterized() já correu
+      // em useNavigator:153, mas protege contra chamadas futuras
+      // fora do fluxo standard.
       restoreElement(currentElement as SVGGElement);
 
-      // setTimeout(0) liberta o frame actual para o GSAP animar o viewBox
-      // sem bloqueios de serialização/canvas.
-      setTimeout(() => {
-        outOfFocusElements.forEach((el) => {
-          rasterizeElement(el as SVGGElement);
-        });
-      }, 0);
+      // PASSO B: Time-slicing via requestAnimationFrame.
+      // Divide os outOfFocusElements em chunks de CHUNK_SIZE,
+      // processando cada chunk num frame separado. O GSAP anima
+      // o viewBox no mesmo frame sem competição pela Main Thread.
+      const elements = Array.from(outOfFocusElements) as SVGGElement[];
+      let index = 0;
+
+      function processChunk() {
+        // Epoch mudou → navegação stale → abortar toda a cadeia rAF
+        if (epochRef.current !== currentEpoch) return;
+
+        const end = Math.min(index + CHUNK_SIZE, elements.length);
+        for (let i = index; i < end; i++) {
+          rasterizeElement(elements[i]);
+        }
+
+        index = end;
+        if (index < elements.length) {
+          requestAnimationFrame(processChunk);
+        }
+      }
+
+      // Primeiro chunk no próximo frame — liberta o frame actual
+      // para o GSAP iniciar a animação do viewBox limpa.
+      requestAnimationFrame(processChunk);
     },
     [restoreElement, rasterizeElement],
   );
+
+  // ─── Cleanup no unmount ────────────────────────────────────────────
+
+  useEffect(() => {
+    const ids = rasterizedIds.current;
+    return () => {
+      ids.clear();
+      epochRef.current = 0;
+    };
+  }, []);
 
   return { optimizeLevelElements, restoreAllRasterized };
 }

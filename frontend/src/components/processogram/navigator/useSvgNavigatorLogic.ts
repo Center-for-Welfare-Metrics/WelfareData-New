@@ -36,7 +36,9 @@ import { useNavigator } from "./hooks/useNavigator";
 import { useClickHandler } from "./hooks/useClickHandler";
 import { useHoverEffects } from "./hooks/useHoverEffects";
 import { useOptimizeSvgParts } from "./hooks/useOptimizeSvgParts";
+import { usePrefetchRaster } from "./hooks/usePrefetchRaster";
 import { getHierarchy, getElementIdentifier } from "./hierarchy";
+import type { RasterImage } from "@/types/processogram";
 import {
   FOCUSED_FILTER,
   ANIMATION_DURATION,
@@ -65,6 +67,13 @@ export interface UseSvgNavigatorLogicProps {
    * Equivalente a "fechar" o processograma / voltar à visão geral.
    */
   onClose: () => void;
+
+  /**
+   * Metadados de rasterização vindos da API para o tema actual.
+   * Key = elementId (ex: "gestation--ph"), valor = {src, x, y, width, height}.
+   * Alimenta o motor de Swap O(1) (LOD via PNG Swap).
+   */
+  rasterImages: Record<string, RasterImage> | undefined;
 }
 
 // ─── Return Type ───────────────────────────────────────────────────────
@@ -92,6 +101,7 @@ export function useSvgNavigatorLogic({
   currentTheme,
   onChange,
   onClose,
+  rasterImages,
 }: UseSvgNavigatorLogicProps): UseSvgNavigatorLogicReturn {
   // ═══════════════════════════════════════════════════
   // 1. ESTADO LOCAL
@@ -206,15 +216,23 @@ export function useSvgNavigatorLogic({
   // 4. COMPOSIÇÃO DOS HOOKS INTERNOS
   // ═══════════════════════════════════════════════════
 
-  // 4a. Motor de rasterização dinâmica (Otimização Nível 2)
+  // 4a. Prefetch de raster (LOD via PNG Swap — Etapa 1+2)
+  //     Faz o download silencioso das imagens PNG para a RAM do browser.
+  //     Deve ser instanciado ANTES de useOptimizeSvgParts para que
+  //     o imageCache esteja disponível como sinal de readiness.
+  const { imageCache } = usePrefetchRaster(rasterImages);
+
+  // 4b. Motor de Swap O(1) (LOD via PNG Swap — Etapa 3)
   //     Deve ser instanciado ANTES de useNavigator para que
   //     optimizeLevelElements e restoreAllRasterized possam
-  //     ser injectados no motor de câmara (4b).
+  //     ser injectados no motor de câmara (4c).
   const { optimizeLevelElements, restoreAllRasterized } = useOptimizeSvgParts({
     svgElement,
+    rasterImages,
+    imageCache,
   });
 
-  // 4b. Motor de câmera (viewBox + isolamento visual)
+  // 4c. Motor de câmera (viewBox + isolamento visual)
   const { changeLevelTo } = useNavigator({
     svgElement,
     historyLevelRef,
@@ -230,7 +248,7 @@ export function useSvgNavigatorLogic({
     restoreAllRasterized,
   });
 
-  // 4c. Interceptação de cliques (drill-down / drill-up / close)
+  // 4d. Interceptação de cliques (drill-down / drill-up / close)
   const { handleClick } = useClickHandler({
     svgElement,
     changeLevelTo,
@@ -241,7 +259,7 @@ export function useSvgNavigatorLogic({
     historyLevelRef,
   });
 
-  // 4d. Efeitos visuais de hover (Event Delegation nativa — zero re-renders)
+  // 4e. Efeitos visuais de hover (Event Delegation nativa — zero re-renders)
   //     Os listeners de mousemove/mouseleave são registados directamente no
   //     svgElement; o React não é envolvido no ciclo de hover.
   useHoverEffects({

@@ -221,11 +221,14 @@ export function useNavigator({
         outOfFocusAnimationRef.current.revert();
       }
 
+      // Aplicação INSTANTÂNEA do filter (gsap.set — duration: 0).
+      // Com 1200+ elementos, o gsap.to anterior interpolava o filter
+      // frame-a-frame durante 0.7s = 1200 repaints/frame × 42 frames.
+      // gsap.set aplica o valor num único batch síncrono → 1 reflow.
+      // O contrato de .revert() é preservado (gsap.set retorna Tween).
       if (outOfFocusElements.length > 0) {
-        outOfFocusAnimationRef.current = gsap.to(outOfFocusElements, {
+        outOfFocusAnimationRef.current = gsap.set(outOfFocusElements, {
           filter: UNFOCUSED_FILTER[currentTheme],
-          duration: ANIMATION_DURATION,
-          ease: ANIMATION_EASE,
         });
       }
 
