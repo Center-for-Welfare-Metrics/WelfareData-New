@@ -107,6 +107,28 @@ Com `opacity`, se um ancestral do target receber `UNFOCUSED_OPACITY`, TODOS os f
 3. No `onComplete` da animação de viewBox, o target recebe novamente `gsap.set` antes de `setFullBrightnessToCurrentLevel`
 4. Antes de qualquer operação em `changeLevelTo`, `clearHover()` é chamado para eliminar hover residual
 
+**Proteção contra canvas wrappers (`isInteractiveNavigableId`):**
+O SVG contém wrappers de fundo com IDs como `CANVAS--CI`, `CANVAS--LF` que seguem a convenção `{prefixo}--{alias}` e passam tanto no seletor `[id*="--"]` quanto em `isNavigableId()`. Porém, estes elementos são containers visuais que envolvem todo o conteúdo de um nível — se receberem `UNFOCUSED_OPACITY`, o SVG inteiro fica invisível.
+
+Para evitar isso, **todos os pontos de seleção** usam `isInteractiveNavigableId(el.id)` como filtro:
+
+```ts
+// extractInfoFromId.ts
+export function isInteractiveNavigableId(id: string): boolean {
+  return isNavigableId(id) && !isCanvasWrapperId(id);
+}
+
+export function isCanvasWrapperId(id: string): boolean {
+  return id.toLowerCase().startsWith("canvas--");
+}
+```
+
+Pontos de aplicação:
+- `useNavigator.ts` → construção de `outOfFocusElements`
+- `useNavigator.ts` → `gsap.killTweensOf()` (limpeza de tweens residuais)
+- `useHoverEffects.ts` → `clearHover()` (restauração de irmãos)
+- `useHoverEffects.ts` → `handleMouseMove()` (irmãos não-hovered)
+
 ### 2. Hover (`useHoverEffects`)
 
 Efeito instantâneo de "spotlight" ao mover o cursor:
@@ -141,6 +163,7 @@ Mouse sobre PH1:           Mouse sai:
 | Sem flickering em hover | `useEffect([onHover])` — só recalcula quando o target muda |
 | Tema dinâmico | `FOCUSED_OPACITY[theme]` / `UNFOCUSED_OPACITY[theme]` — automático |
 | Ancestrais protegidos | `!el.contains(target) && el !== target` impede herança de opacity |
+| Canvas wrappers protegidos | `isInteractiveNavigableId(el.id)` exclui `CANVAS--*` de todos os seletores |
 | Target sempre visível | `gsap.set(target, FOCUSED)` explícito após cada `gsap.set` de outOfFocus |
 | Hover limpo antes de transição | `clearHover()` chamado no início de `changeLevelTo` |
 | Guard de hover no focado | `mousemove` ignora hover no elemento já focado (`currentElementIdRef`) |

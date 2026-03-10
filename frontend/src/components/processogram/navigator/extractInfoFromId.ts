@@ -67,6 +67,35 @@ function extractBaseName(id: string): string {
 // ─── Validação Rápida ──────────────────────────────────────────────────
 
 /**
+ * Prefixo reservado para wrappers de fundo (canvas) no SVG.
+ * Elementos com este prefixo seguem a convenção `CANVAS--{alias}`
+ * e existem apenas como containers visuais — NUNCA são interativos.
+ *
+ * Exemplos reais: `CANVAS--CI`, `CANVAS--PH`, `CANVAS--LF`.
+ */
+const CANVAS_PREFIX = "canvas--";
+
+/**
+ * Verifica se um ID representa um wrapper de fundo (canvas) do SVG.
+ *
+ * Estes elementos seguem a convenção `CANVAS--{alias}` e existem como
+ * containers visuais de fundo. Apesar de passarem em `isNavigableId()`
+ * (porque o sufixo é um alias válido), eles NUNCA devem:
+ *   - receber opacity reduzida (escurece o SVG inteiro)
+ *   - aparecer no breadcrumb
+ *   - ser tratados como alvos de hover
+ *
+ * @example
+ * isCanvasWrapperId("CANVAS--CI")      // true
+ * isCanvasWrapperId("canvas--lf")      // true
+ * isCanvasWrapperId("growing--lf1")    // false
+ * isCanvasWrapperId("heat-stress--ci") // false
+ */
+export function isCanvasWrapperId(id: string): boolean {
+  return id.toLowerCase().startsWith(CANVAS_PREFIX);
+}
+
+/**
  * Verifica se um ID segue a convenção navegável.
  *
  * @example
@@ -76,6 +105,22 @@ function extractBaseName(id: string): string {
  */
 export function isNavigableId(id: string): boolean {
   return extractAlias(id) !== null;
+}
+
+/**
+ * Verifica se um ID é genuinamente navegável e interativo.
+ *
+ * Combina `isNavigableId()` com a exclusão de canvas wrappers.
+ * Usar esta função em vez de `isNavigableId()` nos selectores
+ * que constroem arrays de elementos para animação de opacity.
+ *
+ * @example
+ * isInteractiveNavigableId("growing--lf1")  // true
+ * isInteractiveNavigableId("CANVAS--CI")    // false — canvas wrapper
+ * isInteractiveNavigableId("random-id")     // false — não navegável
+ */
+export function isInteractiveNavigableId(id: string): boolean {
+  return isNavigableId(id) && !isCanvasWrapperId(id);
 }
 
 // ─── Parser Principal ──────────────────────────────────────────────────

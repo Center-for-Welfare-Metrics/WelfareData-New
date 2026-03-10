@@ -42,7 +42,7 @@
 
 import { type RefObject, useEffect, useRef } from "react";
 import { gsap } from "gsap";
-import { getLevelNumberById } from "../extractInfoFromId";
+import { getLevelNumberById, isInteractiveNavigableId } from "../extractInfoFromId";
 import {
   ANIMATION_DURATION,
   ANIMATION_EASE,
@@ -138,9 +138,11 @@ export function useHoverEffects({
       }
 
       if (levelKey) {
-        const siblings = svg.querySelectorAll(
-          `[id*="${levelKey}" i]:not([id="${currentId}"])`,
-        );
+        const siblings = Array.from(
+          svg.querySelectorAll(
+            `[id*="${levelKey}" i]:not([id="${currentId}"])`,
+          ),
+        ).filter((el) => isInteractiveNavigableId(el.id));
         if (siblings.length > 0) {
           gsap.to(siblings, {
             opacity: UNFOCUSED_OPACITY[theme],
@@ -201,10 +203,12 @@ export function useHoverEffects({
         ease: ANIMATION_EASE,
       });
 
-      // Irmãos do mesmo nível → reduzidos
-      const notHovered = svg.querySelectorAll(
-        `[id*="${nextLevelKey}" i]:not([id="${group.id}"])`,
-      );
+      // Irmãos do mesmo nível → reduzidos (excluindo canvas wrappers)
+      const notHovered = Array.from(
+        svg.querySelectorAll(
+          `[id*="${nextLevelKey}" i]:not([id="${group.id}"])`,
+        ),
+      ).filter((el) => isInteractiveNavigableId(el.id));
       if (notHovered.length > 0) {
         gsap.to(notHovered, {
           opacity: UNFOCUSED_OPACITY[theme],

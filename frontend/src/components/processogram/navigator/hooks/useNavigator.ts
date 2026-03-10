@@ -24,7 +24,7 @@
 import { type RefObject, useCallback, useRef } from "react";
 import { gsap } from "gsap";
 import { getElementViewBox } from "../getElementViewBox";
-import { getLevelNumberById } from "../extractInfoFromId";
+import { getLevelNumberById, isInteractiveNavigableId } from "../extractInfoFromId";
 import {
   ANIMATION_DURATION,
   ANIMATION_EASE,
@@ -203,14 +203,22 @@ export function useNavigator({
         outOfFocusSelector = `[id*="--"]:not([id^="${id}"] *):not([id="${id}"])`;
       }
 
-      // ── PROTEGER ANCESTRAIS DO TARGET ─────────────────────────
-      // CSS `filter` num ancestral propaga para todos os filhos.
-      // Rasterização (display:none) num ancestral oculta o target.
-      // Excluir qualquer elemento que contenha o target na árvore DOM
-      // (el.contains é O(1) — verificação DOM nativa).
+      // ── PROTEGER ANCESTRAIS + FILTRAR CANVAS WRAPPERS ────────
+      // 1. el.contains(target): ancestral com opacity reduzida
+      //    propaga para todos os filhos — excluir da lista.
+      // 2. isInteractiveNavigableId: exclui wrappers de fundo
+      //    como CANVAS--CI que passam no seletor [id*="--"]
+      //    mas NÃO são elementos interativos genuínos.
+      //    Sem este filtro, CANVAS--CI recebe UNFOCUSED_OPACITY
+      //    e o SVG inteiro fica invisível.
       const outOfFocusElements = Array.from(
         svgElement.querySelectorAll(outOfFocusSelector),
-      ).filter((el) => !el.contains(target) && el !== target);
+      ).filter(
+        (el) =>
+          !el.contains(target) &&
+          el !== target &&
+          isInteractiveNavigableId(el.id),
+      );
 
       // ═══════════════════════════════════════════════
       // 3. BLINDAGEM DE EVENTOS DOM
@@ -228,7 +236,11 @@ export function useNavigator({
       //      para que o GSAP foque 100% no viewBox.
       lockInteractionRef.current = true;
       svgElement.style.pointerEvents = "none";
-      gsap.killTweensOf(svgElement.querySelectorAll('[id*="--"]'));
+      gsap.killTweensOf(
+        Array.from(svgElement.querySelectorAll('[id*="--"]')).filter(
+          (el) => isInteractiveNavigableId(el.id),
+        ),
+      );
 
       // ═══════════════════════════════════════════════
       // 4. ISOLAMENTO VISUAL (ESCURECER FORA DE FOCO)
