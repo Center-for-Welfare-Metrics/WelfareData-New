@@ -40,7 +40,8 @@ import { usePrefetchRaster } from "./hooks/usePrefetchRaster";
 import { getHierarchy, getElementIdentifier } from "./hierarchy";
 import type { RasterImage } from "@/types/processogram";
 import {
-  FOCUSED_FILTER,
+  FOCUSED_OPACITY,
+  UNFOCUSED_OPACITY,
   ANIMATION_DURATION,
   ANIMATION_EASE,
   INVERSE_DICT,
@@ -161,7 +162,7 @@ export function useSvgNavigatorLogic({
   );
 
   /**
-   * Restaura o brilho total (FOCUSED_FILTER) em todos os filhos
+   * Restaura a opacidade total (FOCUSED_OPACITY) em todos os filhos
    * do nível atual + o próprio elemento enquadrado.
    *
    * Chamado após a animação de changeLevelTo completar, para que
@@ -188,7 +189,7 @@ export function useSvgNavigatorLogic({
         );
         if (self) {
           gsap.to(self, {
-            filter: FOCUSED_FILTER[currentTheme],
+            opacity: FOCUSED_OPACITY[currentTheme],
             duration,
             ease: ANIMATION_EASE,
           });
@@ -202,7 +203,7 @@ export function useSvgNavigatorLogic({
         );
         if (children.length > 0) {
           gsap.to(children, {
-            filter: FOCUSED_FILTER[currentTheme],
+            opacity: FOCUSED_OPACITY[currentTheme],
             duration,
             ease: ANIMATION_EASE,
           });
@@ -341,11 +342,11 @@ export function useSvgNavigatorLogic({
         svgElement.style.pointerEvents = "none";
         gsap.killTweensOf(svgElement.querySelectorAll('[id*="--"]'));
 
-        // Reverte todos os filtros visuais (escurecimento)
+        // Reverte toda a opacidade visual (restaura visibilidade)
         const allFiltered = svgElement.querySelectorAll('[id*="--"]');
         if (allFiltered.length > 0) {
           gsap.to(allFiltered, {
-            filter: FOCUSED_FILTER[currentTheme],
+            opacity: FOCUSED_OPACITY[currentTheme],
             duration: ANIMATION_DURATION,
             ease: ANIMATION_EASE,
           });

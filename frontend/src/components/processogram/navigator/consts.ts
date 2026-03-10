@@ -33,20 +33,20 @@ export const ZOOM_FLOOR_RATIO = 0.05;
 
 // ─── Isolamento Visual (Focus / Mute) ──────────────────────────────────
 //
-// Utiliza exclusivamente `filter` CSS para preservar hue/saturation
-// das cores originais do SVG. Nunca altera fill, stroke ou opacity.
+// Utiliza `opacity` CSS para isolamento visual — propriedade de
+// composição pura na GPU, sem re-rasterização por elemento.
 //
-// brightness(0.3) → escurece para 30% (dark mode)
-// grayscale(1)    → remove toda saturação (light mode)
+// dark:  0.15 → elementos fora de foco quase invisíveis
+// light: 0.2  → levemente mais visíveis em fundo claro
 
-export const FOCUSED_FILTER = {
-  dark: "brightness(1)",
-  light: "grayscale(0)",
+export const FOCUSED_OPACITY = {
+  dark:  1,
+  light: 1,
 } as const;
 
-export const UNFOCUSED_FILTER = {
-  dark: "brightness(0.3)",
-  light: "grayscale(1)",
+export const UNFOCUSED_OPACITY = {
+  dark:  0.15,
+  light: 0.2,
 } as const;
 
 // ─── Dicionário de Níveis Hierárquicos ─────────────────────────────────

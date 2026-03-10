@@ -226,14 +226,14 @@ O escurecimento dos elementos fora de foco foi alterado de:
 ```typescript
 // ANTES (v2): interpolação animada — 1200 repaints/frame por 0.7s
 gsap.to(outOfFocusElements, {
-  filter: UNFOCUSED_FILTER[currentTheme],
+  opacity: UNFOCUSED_OPACITY[currentTheme],
   duration: ANIMATION_DURATION,
   ease: ANIMATION_EASE,
 });
 
 // DEPOIS (v2.1): aplicação instantânea — 1 reflow síncrono
 gsap.set(outOfFocusElements, {
-  filter: UNFOCUSED_FILTER[currentTheme],
+  opacity: UNFOCUSED_OPACITY[currentTheme],
 });
 ```
 

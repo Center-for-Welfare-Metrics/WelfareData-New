@@ -1,67 +1,68 @@
-# Visual Isolation System — "Blackout" (Focus & Mute)
+# Visual Isolation System — Opacity-Based Focus & Mute
 
-> Documentação da decisão arquitetural de isolamento visual no ProcessogramViewer,
-> baseada na engenharia reversa do sistema legado do WFI.
+> Documentação da decisão arquitetural de isolamento visual no ProcessogramViewer.
+> Migrado de `filter: brightness()/grayscale()` para `opacity` por performance GPU.
 
 ---
 
 ## 1. Decisão Arquitetural
 
-### Por que `filter: brightness()` e não `opacity` ou `fill`?
+### Por que `opacity` e não `filter: brightness()` ou `fill`?
 
 | Abordagem         | Efeito Visual                                           | Problema                                                      |
 | ------------------ | ------------------------------------------------------- | ------------------------------------------------------------- |
-| `opacity: 0.3`    | Elemento fica translúcido, mostrando o fundo por baixo  | Perde legibilidade; sobreposições criam artefatos visuais     |
+| `filter: brightness(0.3)` | Cor original mantida, apenas escurecida          | Força re-rasterização GPU por elemento a cada frame; lag severo em SVGs complexos |
 | `fill: #333`      | Cor sólida substitui a original                         | Destrói o mapa biológico — porco rosa vira cinza              |
-| **`brightness(0.3)`** | **Cor original mantida, apenas escurecida**           | **Nenhum — comportamento ideal descoberto no sistema legado** |
+| **`opacity: 0.15`** | **Elemento fica quase invisível, composição GPU pura** | **Zero re-rasterização — performance ótima em SVGs com 1200+ nós** |
 
-O sistema legado do WFI utilizava `filter: brightness()` para criar o efeito de "blackout" onde
-elementos fora do foco ficavam escurecidos mas preservavam suas matizes originais. Um elemento
-rosa (porco) fica rosa-escuro — **não** cinza. Isso mantém a integridade semântica do mapa
-biológico sem poluir a visão do pesquisador.
+O sistema anterior usava `filter: brightness()` / `filter: grayscale()` que, apesar de preservar
+matizes, forçava o browser a criar camadas GPU individuais por elemento e re-rasterizar vetores
+a cada frame de animação GSAP. Com 1200+ elementos, isso gerava ~50.400 repaints por transição.
+
+`opacity` é uma propriedade de **composição pura na GPU** — o browser apenas ajusta o alpha
+channel na composição final, sem re-rasterização.
 
 ### Regra Fundamental
 
-> **NUNCA** altere `fill`, `stroke` ou `opacity` dos elementos SVG para fins de isolamento visual.
-> Use **exclusivamente** `filter: brightness()`.
+> **NUNCA** altere `fill`, `stroke` ou `filter` dos elementos SVG para fins de isolamento visual.
+> Use **exclusivamente** `opacity` via GSAP.
 
 ---
 
-## 2. Mecanismo de Isolamento (GSAP Filter)
+## 2. Mecanismo de Isolamento (GSAP Opacity)
 
 > **Nota:** O sistema anterior usava classes CSS (`.is-exploring`, `.is-active-zone`,
 > `.is-target-element`). Esse mecanismo foi **removido** e substituído por animação
-> direta de `filter` via GSAP no módulo `navigator/`.
+> direta de `opacity` via GSAP no módulo `navigator/`.
 
 O isolamento visual agora é aplicado **diretamente via GSAP** — sem classes CSS intermediárias:
 
 ### Drill-down (`useNavigator.changeLevelTo`)
 
-- **Irmãos fora de foco:** `gsap.to(siblings, { filter: UNFOCUSED_FILTER })`
-  - Dark mode: `brightness(0.3)` — escurece preservando matizes
-  - Light mode: `grayscale(1)` — dessatura preservando luminosidade
-- **Elemento enquadrado + filhos:** `gsap.to(focused, { filter: FOCUSED_FILTER })`
-  - Dark mode: `brightness(1)` — brilho total
-  - Light mode: `grayscale(0)` — saturação total
+- **Irmãos fora de foco:** `gsap.set(siblings, { opacity: UNFOCUSED_OPACITY })`
+  - Dark mode: `0.15` — quase invisível
+  - Light mode: `0.2` — levemente visível
+- **Elemento enquadrado + filhos:** `gsap.to(focused, { opacity: FOCUSED_OPACITY })`
+  - Ambos os temas: `1` — visibilidade total
 
 ### Hover (`useHoverEffects`)
 
-- **Elemento sob o cursor:** FOCUSED_FILTER (brilho/saturação total)
-- **Irmãos do mesmo nível:** UNFOCUSED_FILTER (escurecidos/dessaturados)
+- **Elemento sob o cursor:** FOCUSED_OPACITY (visibilidade total)
+- **Irmãos do mesmo nível:** UNFOCUSED_OPACITY (reduzidos)
 - **Mouse saiu:** restaura estado padrão do nível atual da câmera
 
 ### Constantes (`navigator/consts.ts`)
 
 ```ts
-export const FOCUSED_FILTER = {
-  dark: "brightness(1)",
-  light: "grayscale(0)",
-};
+export const FOCUSED_OPACITY = {
+  dark:  1,
+  light: 1,
+} as const;
 
-export const UNFOCUSED_FILTER = {
-  dark: "brightness(0.3)",
-  light: "grayscale(1)",
-};
+export const UNFOCUSED_OPACITY = {
+  dark:  0.15,
+  light: 0.2,
+} as const;
 ```
 
 ---
@@ -73,18 +74,18 @@ pela ordem de execução, não por especificidade CSS:
 
 ```
                          ┌─────────────────────────────────────┐
-1. changeLevelTo()       │  Irmãos → UNFOCUSED_FILTER          │
-                         │  Alvo   → FOCUSED_FILTER            │
+1. changeLevelTo()       │  Irmãos → UNFOCUSED_OPACITY          │
+                         │  Alvo   → FOCUSED_OPACITY            │
                          └────────────┬────────────────────────┘
                                       │
                          ┌────────────▼────────────────────────┐
 2. setFullBrightness()   │  Filhos do próximo nível            │
-                         │  → FOCUSED_FILTER (drill-down ready)│
+                         │  → FOCUSED_OPACITY (drill-down ready)│
                          └────────────┬────────────────────────┘
                                       │
                          ┌────────────▼────────────────────────┐
-3. useHoverEffects       │  Hovered → FOCUSED_FILTER           │
-                         │  Siblings → UNFOCUSED_FILTER        │
+3. useHoverEffects       │  Hovered → FOCUSED_OPACITY           │
+                         │  Siblings → UNFOCUSED_OPACITY        │
                          └─────────────────────────────────────┘
 ```
 
@@ -113,29 +114,30 @@ pela ordem de execução, não por especificidade CSS:
 > `.is-target-element`) aplicadas via `useEffect` em `ProcessogramInteractiveLayer.tsx`.
 > Esse sistema foi **deletado** e substituído pelo módulo `navigator/`.
 
-O sistema atual usa **GSAP** para animar `filter: brightness()` / `filter: grayscale()`
+O sistema atual usa **GSAP** para animar `opacity`
 diretamente nos elementos SVG, sem classes CSS intermediárias:
 
 ```
 Drill-down (useNavigator.changeLevelTo):
   1. Calcula viewBox destino (getElementViewBox com swap síncrono do viewBox original)
   2. Seleciona irmãos fora de foco (seletores CSS com flag `i` — case-insensitive)
-  3. gsap.to(irmãos, { filter: UNFOCUSED_FILTER })
+  3. gsap.set(irmãos, { opacity: UNFOCUSED_OPACITY })
   4. gsap.fromTo(svg, { viewBox: atual }, { viewBox: destino })
   5. onComplete → setFullBrightnessToCurrentLevel()
 
 Hover (useHoverEffects):
-  1. onHover = id → gsap.to(hovered, { filter: FOCUSED_FILTER })
-                   → gsap.to(siblings, { filter: UNFOCUSED_FILTER })
+  1. onHover = id → gsap.to(hovered, { opacity: FOCUSED_OPACITY })
+                   → gsap.to(siblings, { opacity: UNFOCUSED_OPACITY })
   2. onHover = null → restaura estado padrão do nível atual
 ```
 
 ### Vantagens sobre o sistema de classes CSS
 
-1. **Transições animadas com easing** — GSAP interpola filter frame a frame
+1. **Transições animadas com easing** — GSAP interpola opacity frame a frame (composição GPU)
 2. **Sem leak de classes** — não precisa cleanup de classList
-3. **Tema-aware** — dark mode usa `brightness()`, light mode usa `grayscale()`
+3. **Tema-aware** — dark mode usa `0.15`, light mode usa `0.2`
 4. **Integrado com a câmera** — isolamento visual acompanha a animação de viewBox
+5. **Zero re-rasterização** — `opacity` é composição pura na GPU
 
 ---
 
@@ -155,9 +157,9 @@ Todos os primitivos SVG (`path`, `rect`, `polygon`, `circle`, `ellipse`, `line`,
 | Arquivo                                                        | Responsabilidade                                        |
 | -------------------------------------------------------------- | ------------------------------------------------------- |
 | `frontend/src/app/globals.css`                                 | Regras CSS de transition (fallback, transições de base) |
-| `frontend/src/components/.../navigator/hooks/useNavigator.ts`  | Isolamento visual GSAP nos drill-down (UNFOCUSED_FILTER)|
+| `frontend/src/components/.../navigator/hooks/useNavigator.ts`  | Isolamento visual GSAP nos drill-down (UNFOCUSED_OPACITY)|
 | `frontend/src/components/.../navigator/hooks/useHoverEffects.ts`| Isolamento visual GSAP no hover                        |
-| `frontend/src/components/.../navigator/consts.ts`              | FOCUSED_FILTER, UNFOCUSED_FILTER (dark/light)           |
+| `frontend/src/components/.../navigator/consts.ts`              | FOCUSED_OPACITY, UNFOCUSED_OPACITY (dark/light)         |
 | `frontend/src/components/.../navigator/useSvgNavigatorLogic.ts`| Orquestrador: compõe os hooks acima + `originalViewBoxRef` |
 | `frontend/src/components/.../navigator/getElementViewBox.ts`   | Cálculo de viewBox com swap síncrono para estabilizar CTM |
 | `frontend/src/app/view/[id]/page.tsx`                          | Conecta orquestrador ao ProcessogramViewer              |
@@ -175,12 +177,12 @@ Todos os primitivos SVG (`path`, `rect`, `polygon`, `circle`, `ellipse`, `line`,
 
 ### Cenário 2: Drill-down para nível 2
 - [ ] viewBox anima para enquadrar o `<g>` de nível 2
-- [ ] Irmãos fora de foco escurecem (UNFOCUSED_FILTER)
-- [ ] Filhos do próximo nível ficam com brilho total (FOCUSED_FILTER)
+- [ ] Irmãos fora de foco ficam reduzidos (UNFOCUSED_OPACITY)
+- [ ] Filhos do próximo nível ficam com visibilidade total (FOCUSED_OPACITY)
 
 ### Cenário 3: Hover sobre grupo semântico
-- [ ] Grupo sob o cursor ganha brilho total (FOCUSED_FILTER)
-- [ ] Irmãos do mesmo nível escurecem (UNFOCUSED_FILTER)
+- [ ] Grupo sob o cursor ganha visibilidade total (FOCUSED_OPACITY)
+- [ ] Irmãos do mesmo nível ficam reduzidos (UNFOCUSED_OPACITY)
 - [ ] Ao mover o cursor para fora: restaura estado padrão do nível
 
 ### Cenário 4: Drill-up (clique no vazio)
@@ -189,6 +191,6 @@ Todos os primitivos SVG (`path`, `rect`, `polygon`, `circle`, `ellipse`, `line`,
 - [ ] Se no root e clicar no vazio: onClose() limpa tudo
 
 ### Cenário 5: Preservação de cores (dark mode)
-- [ ] Um elemento rosa escurece para rosa-escuro (não cinza)
-- [ ] Um elemento verde escurece para verde-escuro (não cinza)
+- [ ] Um elemento rosa fica com opacity reduzida (não cinza)
+- [ ] Um elemento verde fica com opacity reduzida (não cinza)
 - [ ] Nenhum `fill` ou `stroke` foi alterado no inspetor do DevTools

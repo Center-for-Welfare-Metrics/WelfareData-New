@@ -28,7 +28,7 @@ import { getLevelNumberById } from "../extractInfoFromId";
 import {
   ANIMATION_DURATION,
   ANIMATION_EASE,
-  UNFOCUSED_FILTER,
+  UNFOCUSED_OPACITY,
   INVERSE_DICT,
   MAX_LEVEL,
 } from "../consts";
@@ -234,7 +234,7 @@ export function useNavigator({
       // O contrato de .revert() é preservado (gsap.set retorna Tween).
       if (outOfFocusElements.length > 0) {
         outOfFocusAnimationRef.current = gsap.set(outOfFocusElements, {
-          filter: UNFOCUSED_FILTER[currentTheme],
+          opacity: UNFOCUSED_OPACITY[currentTheme],
         });
       }
 

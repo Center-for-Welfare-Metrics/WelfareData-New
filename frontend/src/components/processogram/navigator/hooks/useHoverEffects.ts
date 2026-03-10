@@ -30,9 +30,9 @@
  *   Antes: pixel → setOnHover → re-render React → useEffect → GSAP (~60 renders/s)
  *   Agora: pixel → handler DOM nativo → GSAP  (0 re-renders)
  *
- * O sistema NUNCA altera `fill`, `stroke` ou `opacity`. Utiliza
- * exclusivamente `filter: brightness()` (dark) ou `filter: grayscale()`
- * (light) via GSAP para preservar 100% das cores originais do SVG.
+ * O sistema NUNCA altera `fill`, `stroke` ou `filter`. Utiliza
+ * exclusivamente `opacity` via GSAP para isolamento visual —
+ * propriedade de composição pura na GPU, sem re-rasterização.
  *
  * Referência: GUIA_REPLICACAO_SVG_NAVIGATOR.md §8, §11
  * ═══════════════════════════════════════════════════════════════════════
@@ -46,8 +46,8 @@ import { getLevelNumberById } from "../extractInfoFromId";
 import {
   ANIMATION_DURATION,
   ANIMATION_EASE,
-  FOCUSED_FILTER,
-  UNFOCUSED_FILTER,
+  FOCUSED_OPACITY,
+  UNFOCUSED_OPACITY,
   INVERSE_DICT,
 } from "../consts";
 
@@ -128,21 +128,21 @@ export function useHoverEffects({
         );
         if (siblings.length > 0) {
           gsap.to(siblings, {
-            filter: UNFOCUSED_FILTER[theme],
+            opacity: UNFOCUSED_OPACITY[theme],
             duration: halfDuration,
             ease: ANIMATION_EASE,
           });
         }
       }
 
-      // Elemento enquadrado + filhos do próximo nível → brilho total
+      // Elemento enquadrado + filhos do próximo nível → opacidade total
       const focusedSelector = nextLevelKey
         ? `[id="${currentId}"],[id*="${nextLevelKey}" i]`
         : `[id="${currentId}"]`;
       const focused = svg.querySelectorAll(focusedSelector);
       if (focused.length > 0) {
         gsap.to(focused, {
-          filter: FOCUSED_FILTER[theme],
+          opacity: FOCUSED_OPACITY[theme],
           duration: halfDuration,
           ease: ANIMATION_EASE,
         });
@@ -173,20 +173,20 @@ export function useHoverEffects({
       hoveredElementId.current = group.id;
       const theme = themeRef.current;
 
-      // Grupo hovered → brilho total
+      // Grupo hovered → opacidade total
       gsap.to(group, {
-        filter: FOCUSED_FILTER[theme],
+        opacity: FOCUSED_OPACITY[theme],
         duration: halfDuration,
         ease: ANIMATION_EASE,
       });
 
-      // Irmãos do mesmo nível → escurecidos
+      // Irmãos do mesmo nível → reduzidos
       const notHovered = svg.querySelectorAll(
         `[id*="${nextLevelKey}" i]:not([id="${group.id}"])`,
       );
       if (notHovered.length > 0) {
         gsap.to(notHovered, {
-          filter: UNFOCUSED_FILTER[theme],
+          opacity: UNFOCUSED_OPACITY[theme],
           duration: halfDuration,
           ease: ANIMATION_EASE,
         });

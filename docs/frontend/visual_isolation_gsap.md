@@ -1,4 +1,4 @@
-# 🎨 Isolamento Visual via GSAP Filter — Arquitetura & Fundamento
+# 🎨 Isolamento Visual via GSAP Opacity — Arquitetura & Fundamento
 
 > **Módulo:** `navigator/hooks/useNavigator.ts` (outOfFocus), `navigator/hooks/useHoverEffects.ts`  
 > **Etapa:** 4 de 5  
@@ -6,24 +6,14 @@
 
 ---
 
-## Por que `filter` em vez de `opacity`, `fill` ou CSS estático?
+## Por que `opacity` em vez de `filter`, `fill` ou CSS estático?
 
-### O problema com `opacity`
+### O problema com `filter: brightness()` / `filter: grayscale()`
 
-```
-opacity: 0.3 aplicado a um <g> com elementos sobrepostos:
-
-┌─────────────────────┐
-│  ┌──────┐           │
-│  │ Path │← opacity 0.3 → as áreas sobrepostas ficam
-│  │ ┌────┤           │    com transparência dupla (0.09),
-│  │ │Text│           │    criando artefatos visuais
-│  │ └────┘           │
-│  └──────┘           │
-└─────────────────────┘
-```
-
-`opacity` afeta **tudo** dentro do grupo — `fill`, `stroke`, `text` — e cria artefatos de transparência em elementos sobrepostos. Não é adequado para SVGs complexos com muitas camadas.
+`filter` CSS força o browser a:
+- Criar **camadas GPU individuais** por cada elemento filtrado
+- **Re-rasterizar vetores** a cada frame de animação GSAP
+- Em SVGs complexos (1200+ elementos), isso causa **lag severo** (~50.400 repaints por transição)
 
 ### O problema com alterar `fill`/`stroke`
 
@@ -33,24 +23,23 @@ Modificar diretamente `fill` ou `stroke` dos elementos:
 - Restaurar o estado original requer clonar/cachear valores para cada atributo
 - Não funciona com gradientes, patterns ou imagens embedded
 
-### A solução: `filter: brightness()` / `filter: grayscale()`
+### A solução: `opacity`
 
 ```
-filter: brightness(0.3)        filter: brightness(1)
+opacity: 0.15 (dark)           opacity: 1
 ┌─────────────────────┐        ┌─────────────────────┐
-│  ████████████████   │        │  ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓  │
-│  █ ESCURO mas     █ │        │  ▓ BRILHO NORMAL  ▓ │
-│  █ CORES INTACTAS █ │        │  ▓ CORES INTACTAS ▓ │
-│  █ SÓLIDO (s/     █ │        │  ▓ SÓLIDO         ▓ │
-│  █ transparência) █ │        │  ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓  │
-│  ████████████████   │        └─────────────────────┘
-└─────────────────────┘
+│  ░░░░░░░░░░░░░░░░  │        │  ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓  │
+│  ░ QUASE INVISÍVEL░ │        │  ▓ VISIB. NORMAL  ▓ │
+│  ░ sem re-raster  ░ │        │  ▓ CORES INTACTAS ▓ │
+│  ░ GPU-composited ░ │        │  ▓                 ▓ │
+│  ░░░░░░░░░░░░░░░░  │        │  ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓  │
+└─────────────────────┘        └─────────────────────┘
 ```
 
 **Vantagens:**
-- **Preserva hue/saturation:** apenas reduz luminosidade — as cores do Wladimir ficam 100% intactas
-- **Sem artefatos:** o elemento fica "sólido" mas escurecido — não há transparência
-- **Reversível trivialmente:** `brightness(1)` restaura o estado original sem nenhum cache
+- **Composição pura na GPU:** `opacity` é uma propriedade que a GPU compõe sem re-rasterizar — sem camadas individuais por elemento
+- **Zero repaints por frame:** o browser apenas ajusta o alpha channel na composição final
+- **Reversível trivialmente:** `opacity: 1` restaura o estado original sem nenhum cache
 - **Um único CSS property:** aplicado no `<g>` pai, afeta todos os filhos automaticamente
 - **Animável via GSAP:** transição suave entre estados em ~0.35s
 
@@ -58,23 +47,19 @@ filter: brightness(0.3)        filter: brightness(1)
 
 ## Modos de Tema
 
-### Dark Mode — `brightness()`
+### Dark Mode
 
-| Estado | Filtro | Efeito |
-|--------|--------|--------|
-| FOCUSED | `brightness(1)` | Brilho normal (100%) — cores originais |
-| UNFOCUSED | `brightness(0.3)` | Escurece para 30% — mantém hue, reduz luminosidade |
+| Estado | Opacity | Efeito |
+|--------|---------|--------|
+| FOCUSED | `1` | Visibilidade total — cores originais |
+| UNFOCUSED | `0.15` | Quase invisível contra fundo escuro — forte contraste com o elemento ativo |
 
-Resultado: elementos fora de foco ficam quase "apagados" contra o fundo escuro, criando forte contraste com o elemento ativo.
+### Light Mode
 
-### Light Mode — `grayscale()`
-
-| Estado | Filtro | Efeito |
-|--------|--------|--------|
-| FOCUSED | `grayscale(0)` | Sem dessaturação — cores originais |
-| UNFOCUSED | `grayscale(1)` | Remove toda saturação — fica cinza monocromático |
-
-Resultado: no fundo claro, `brightness(0.3)` tornaria os elementos invisíveis. `grayscale(1)` mantém a forma visível mas remove a cor, criando contraste por saturação.
+| Estado | Opacity | Efeito |
+|--------|---------|--------|
+| FOCUSED | `1` | Visibilidade total — cores originais |
+| UNFOCUSED | `0.2` | Levemente mais visível que dark mode — mantém legibilidade no fundo claro |
 
 ---
 
@@ -87,10 +72,10 @@ Quando o usuário clica num grupo e a câmera desliza:
 ```
 ANTES (visão geral):        DEPOIS (zoom em LF1):
 ┌──────────────────┐        ┌──────────────────┐
-│ [LF1] [LF2] [LF3]│   →   │ ████████████████ │ ← LF2/LF3: brightness(0.3)
-│                   │        │ ║    LF1       ║ │ ← LF1: brightness(1)
-│                   │        │ ║  [PH1] [PH2] ║ │ ← filhos: brightness(1)
-│                   │        │ ████████████████ │
+│ [LF1] [LF2] [LF3]│   →   │ ░░░░░░░░░░░░░░░░ │ ← LF2/LF3: opacity 0.15
+│                   │        │ ║    LF1       ║ │ ← LF1: opacity 1
+│                   │        │ ║  [PH1] [PH2] ║ │ ← filhos: opacity 1
+│                   │        │ ░░░░░░░░░░░░░░░░ │
 └──────────────────┘        └──────────────────┘
 ```
 
@@ -119,7 +104,7 @@ Efeito instantâneo de "spotlight" ao mover o cursor:
 Mouse sobre PH1:           Mouse sai:
 ┌──────────────────┐        ┌──────────────────┐
 │ ║  [PH1]       ║ │ ← 1.0 │ ║  [PH1] [PH2] ║ │ ← ambos 1.0
-│ ║  ████ [PH2] ║ │ ← 0.3 │ ║               ║ │
+│ ║  ░░░░ [PH2] ║ │ ← 0.15│ ║               ║ │
 └──────────────────┘        └──────────────────┘
 ```
 
@@ -138,12 +123,12 @@ Mouse sobre PH1:           Mouse sai:
 
 | Garantia | Como |
 |----------|------|
-| Cores do SVG nunca alteradas | Apenas `filter` CSS — `fill`/`stroke`/`opacity` intocados |
-| Sem artefatos de transparência | `brightness` em vez de `opacity` |
-| Restauração perfeita | `brightness(1)` / `grayscale(0)` = estado original sem cache |
+| Cores do SVG nunca alteradas | Apenas `opacity` CSS — `fill`/`stroke`/`filter` intocados |
+| Zero re-rasterização | `opacity` é composição pura na GPU |
+| Restauração perfeita | `opacity: 1` = estado original sem cache |
 | Sem sobreposição de animações | `.revert()` na animação anterior antes de iniciar nova |
 | Sem flickering em hover | `useEffect([onHover])` — só recalcula quando o target muda |
-| Tema dinâmico | `FOCUSED_FILTER[theme]` / `UNFOCUSED_FILTER[theme]` — automático |
+| Tema dinâmico | `FOCUSED_OPACITY[theme]` / `UNFOCUSED_OPACITY[theme]` — automático |
 
 ---
 
@@ -155,8 +140,8 @@ Etapa 2 (✅) → getElementViewBox.ts  → calcula PARA ONDE a câmera vai (swa
 Etapa 3 (✅) → useNavigator.ts       → ANIMA a transição com GSAP (passa originalViewBoxRef)
               useClickHandler.ts     → DECIDE drill-down vs drill-up (auto-click guard + fallbacks)
               hierarchy.ts           → MONTA o breadcrumb path (seletores case-insensitive)
-Etapa 4 (✅) → useNavigator.ts       → ESCURECE irmãos fora de foco (seletores com flag `i`)
-              useHoverEffects.ts     → HOVER spotlight com filter (seletores com flag `i`)
+Etapa 4 (✅) → useNavigator.ts       → REDUZ OPACIDADE dos irmãos fora de foco (seletores com flag `i`)
+              useHoverEffects.ts     → HOVER spotlight com opacity (seletores com flag `i`)
 Etapa 5 (🔲) → useEventBus.ts        → navegação programática
               useSvgNavigatorLogic   → orquestrador dos hooks (+ originalViewBoxRef)
 ```
