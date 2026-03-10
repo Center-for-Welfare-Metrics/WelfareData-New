@@ -96,7 +96,7 @@ export interface UseNavigatorProps {
    */
   optimizeLevelElements?: (
     currentElement: SVGElement,
-    outOfFocusElements: NodeListOf<Element>,
+    outOfFocusElements: readonly Element[],
   ) => void;
 }
 
@@ -192,8 +192,14 @@ export function useNavigator({
         outOfFocusSelector = `[id*="--"]:not([id^="${id}"] *):not([id="${id}"])`;
       }
 
-      const outOfFocusElements =
-        svgElement.querySelectorAll(outOfFocusSelector);
+      // ── PROTEGER ANCESTRAIS DO TARGET ─────────────────────────
+      // CSS `filter` num ancestral propaga para todos os filhos.
+      // Rasterização (display:none) num ancestral oculta o target.
+      // Excluir qualquer elemento que contenha o target na árvore DOM
+      // (el.contains é O(1) — verificação DOM nativa).
+      const outOfFocusElements = Array.from(
+        svgElement.querySelectorAll(outOfFocusSelector),
+      ).filter((el) => !el.contains(target));
 
       // ═══════════════════════════════════════════════
       // 3. BLINDAGEM DE EVENTOS DOM

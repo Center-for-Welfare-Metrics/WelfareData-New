@@ -11,14 +11,14 @@ O WelfareData é uma aplicação **monolítica integrada**: um único servidor E
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
 │                         CLIENT (Browser)                            │
-│  Next.js 15 · App Router · Tailwind · shadcn/ui · Framer Motion    │
-│  TanStack Query · React Zoom Pan Pinch · SSE Consumer              │
+│  Next.js 15 · App Router · Tailwind · shadcn/ui · Framer Motion     │
+│  TanStack Query · React Zoom Pan Pinch · SSE Consumer               │
 └────────────────────────────┬────────────────────────────────────────┘
                              │ HTTP / SSE
                              │ Cookies HttpOnly
                              ▼
 ┌─────────────────────────────────────────────────────────────────────┐
-│                       EXPRESS SERVER (:8080)                         │
+│                       EXPRESS SERVER (:8080)                        │
 │                                                                     │
 │  GET /                  → "API v1 running. Frontend under..."       │
 │  /api/v1/*              → API REST + SSE (todas as rotas)           │

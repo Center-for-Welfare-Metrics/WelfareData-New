@@ -90,7 +90,7 @@ export interface UseOptimizeSvgPartsReturn {
    */
   optimizeLevelElements: (
     currentElement: SVGElement,
-    outOfFocusElements: NodeListOf<Element>,
+    outOfFocusElements: readonly Element[],
   ) => void;
 
   /**
@@ -112,6 +112,19 @@ export function useOptimizeSvgParts({
    * Permite iterar em `restoreAllRasterized` sem varrer todo o DOM.
    */
   const rasterizedIds = useRef<Set<string>>(new Set());
+
+  /**
+   * Rastreia o elemento elevado (movido para o fim do parent) para
+   * correcção de z-order SVG. Quando irmãos são rasterizados, os
+   * `<image>` inseridos após os `<g>` ocultos podem ficar ACIMA do
+   * target no DOM — e SVG renderiza por ordem de DOM. Este ref
+   * guarda a posição original para restauro em `restoreAllRasterized`.
+   */
+  const elevatedRef = useRef<{
+    element: SVGElement;
+    parent: Node;
+    nextSibling: Node | null;
+  } | null>(null);
 
   /**
    * Epoch counter para invalidar setTimeout stale.
@@ -164,6 +177,16 @@ export function useOptimizeSvgParts({
 
   const restoreAllRasterized = useCallback((): void => {
     if (!svgElement) return;
+
+    // Restaura z-order do elemento elevado antes de restaurar os
+    // irmãos — garante que o DOM volta à ordem original do SVG.
+    if (elevatedRef.current) {
+      const { element, parent, nextSibling } = elevatedRef.current;
+      if (element.parentNode === parent) {
+        parent.insertBefore(element, nextSibling);
+      }
+      elevatedRef.current = null;
+    }
 
     for (const id of Array.from(rasterizedIds.current)) {
       const el = svgElement.querySelector<SVGGElement>(`#${CSS.escape(id)}`);
@@ -221,6 +244,15 @@ export function useOptimizeSvgParts({
       imageEl.setAttribute("height", String(data.height));
       imageEl.setAttribute("data-rasterized-for", id);
 
+      // Herança de filtro: o gsap.set em useNavigator aplica
+      // brightness/grayscale ao <g> ANTES da rasterização.
+      // O <image> é um sibling, não filho — não herda o filtro.
+      // Copiar o inline filter garante consistência visual e evita
+      // que PNGs a 100% de brilho cubram o target quando sobrepõem.
+      if (element.style.filter) {
+        imageEl.style.filter = element.style.filter;
+      }
+
       element.style.display = "none";
       element.parentNode?.insertBefore(imageEl, element.nextSibling);
     },
@@ -232,7 +264,7 @@ export function useOptimizeSvgParts({
   const optimizeLevelElements = useCallback(
     (
       currentElement: SVGElement,
-      outOfFocusElements: NodeListOf<Element>,
+      outOfFocusElements: readonly Element[],
     ): void => {
       // Incrementa epoch — invalida chunks rAF de navegações anteriores
       const currentEpoch = ++epochRef.current;
@@ -242,6 +274,36 @@ export function useOptimizeSvgParts({
       // em useNavigator:153, mas protege contra chamadas futuras
       // fora do fluxo standard.
       restoreElement(currentElement as SVGGElement);
+
+      // PASSO A.1: Coletar IDs do target + ancestrais.
+      // Guarda defensiva: NUNCA rasterizar o target ou os seus
+      // ancestrais. display:none num ancestral propaga-se aos
+      // filhos — ocultaria o target atrás de um PNG de baixa
+      // resolução. useNavigator já filtra ancestrais, mas esta
+      // guarda protege contra chamadas fora do fluxo standard.
+      const protectedIds = new Set<string>();
+      if (currentElement.id) protectedIds.add(currentElement.id);
+      let ancestorEl: Element | null = currentElement.parentElement;
+      while (ancestorEl) {
+        if (ancestorEl.id) protectedIds.add(ancestorEl.id);
+        ancestorEl = ancestorEl.parentElement;
+      }
+
+      // PASSO A.2: Elevar target para o fim do parent (z-order SVG).
+      // SVG renderiza por ordem de DOM: elemento posterior = acima.
+      // Os <image> dos irmãos rasterizados são inseridos após os
+      // <g> ocultos, podendo ficar ACIMA do target quando há
+      // sobreposição espacial (ex: porcos no mesmo pen).
+      // appendChild move (não clona) — referências GSAP preservadas.
+      const targetParent = currentElement.parentNode;
+      if (targetParent) {
+        elevatedRef.current = {
+          element: currentElement,
+          parent: targetParent,
+          nextSibling: currentElement.nextSibling,
+        };
+        targetParent.appendChild(currentElement);
+      }
 
       // PASSO B: Time-slicing via requestAnimationFrame.
       // Divide os outOfFocusElements em chunks de CHUNK_SIZE,
@@ -256,6 +318,7 @@ export function useOptimizeSvgParts({
 
         const end = Math.min(index + CHUNK_SIZE, elements.length);
         for (let i = index; i < end; i++) {
+          if (protectedIds.has(elements[i].id)) continue;
           rasterizeElement(elements[i]);
         }
 
@@ -279,6 +342,7 @@ export function useOptimizeSvgParts({
     return () => {
       ids.clear();
       epochRef.current = 0;
+      elevatedRef.current = null;
     };
   }, []);
 

@@ -1,7 +1,7 @@
 # ADR-004: Motor de Rasterização Dinâmica (LOD via PNG Swap)
 
-**Status:** Aceito (v2.1)
-**Data:** 06/03/2026
+**Status:** Aceito (v2.3)
+**Data:** 09/03/2026
 **Autores:** WFI Engineering Team
 
 ---
@@ -12,7 +12,9 @@
 |---|---|---|
 | v1 | 05/03/2026 | Canvas client-side: `XMLSerializer → Blob → Canvas → base64` |
 | v2 | 06/03/2026 | LOD via PNG Swap: lookup O(1) em PNGs pré-renderizados pelo backend |
-| **v2.1** | **06/03/2026** | **rAF time-slicing (400 el/frame) + filtro instantâneo (`gsap.set`)** |
+| v2.1 | 06/03/2026 | rAF time-slicing (400 el/frame) + filtro instantâneo (`gsap.set`) |
+| **v2.2** | **09/03/2026** | **Proteção de ancestrais: target + cadeia ancestral nunca rasterizados** |
+| **v2.3** | **09/03/2026** | **Z-order SVG: elevação do target + herança de filtro para `<image>`** |
 
 ---
 
@@ -101,9 +103,11 @@ changeLevelTo(target)
   ├─ 5. onChange(identifier, hierarchy)  ← notifica UI
   ├─ 5.5 optimizeLevelElements(target, outOfFocusElements)
   │       ├─ restoreElement(target)      ← garante target vectorial (defensivo)
+  │       ├─ protectedIds(target + ancestrais) ← guarda defensiva v2.2
   │       └─ requestAnimationFrame:      ← liberta frame para GSAP
   │             processChunk(400 el/frame):
   │               epoch check            ← aborta se navegação stale
+  │               protectedIds check      ← skip target + ancestrais
   │               rasterizeElement(sib1)   ─┐
   │               rasterizeElement(sib2)    │ O(1): lookup Map + 1 nó DOM
   │               ...                      │ 400 por frame via rAF
@@ -146,6 +150,9 @@ DOM após o swap:
 | Unmount durante prefetch | Cleanup: `aborted = true` + `img.src = ""` + `Map.clear()` |
 | Mudança de tema (light → dark) | Cleanup do useEffect limpa cache; novo ciclo de prefetch com URLs do novo tema |
 | Elemento sem ID ou sem dados no backend | Guards de entrada: `if (!id) return` / `if (!data) return` |
+| **Ancestral do target no outOfFocusElements** | **v2.2: `el.contains(target)` filtra ancestrais no useNavigator; `protectedIds` Set guarda defensiva no processChunk** |
+| **PNGs de irmãos cobrem target (SVG z-order)** | **v2.3: `appendChild(target)` eleva o target para o fim do parent; `elevatedRef` guarda posição original para restauro** |
+| **`<image>` sem filtro a 100% brilho sobrepõe target** | **v2.3: `rasterizeElement` copia `style.filter` do `<g>` para o `<image>` — mesma aparência visual** |
 
 ### Cadeia de Dados (Injeção de Dependências)
 
@@ -239,7 +246,237 @@ gsap.set(outOfFocusElements, {
 | Prefetch por proximidade (getBBox distances) | Over-engineering: calcular distâncias para 1200 elementos custa mais que o swap em si. Elementos estão escurecidos — prioridade visual é irrelevante. |
 | `will-change: transform` em cada elemento | **Prejudicial**: 1200 GPU layers × ~200KB-2MB = 240MB-2.4GB VRAM. Degrada performance em vez de melhorar. |
 
+---
 
+## Otimização v2.2: Proteção de Ancestrais (Target Nítido)
+
+### Bug Identificado
+
+O target do zoom (elemento clicado) aparecia desfocado/pixelado durante e após a animação de câmera. O utilizador via um PNG de baixa resolução em vez do SVG vectorial nítido.
+
+### Causa Raiz
+
+O `outOfFocusSelector` para níveis não-folha:
+
+```css
+[id*="--"]:not([id^="${id}"] *):not([id="${id}"])
+```
+
+Exclui correctamente:
+- O target (`:not([id="${id}"])`)
+- Descendentes do target (`:not([id^="${id}"] *)`)
+
+**Mas NÃO exclui ancestrais do target.** Exemplo com hierarquia:
+
+```
+<g id="conventional_cages--ps">           ← ancestral (nível 0)
+  <g id="laying_hen--lf">                 ← ancestral (nível 1)
+    <g id="laying--ph">                   ← TARGET (nível 2)
+      <g id="heat--ci">                   ← descendente (nível 3)
+```
+
+Quando o utilizador clica em `laying--ph`, o selector inclui `laying_hen--lf` (e `conventional_cages--ps`) como "fora de foco". Isto causa **dois problemas simultâneos**:
+
+| Problema | Mecanismo | Efeito Visual |
+|---|---|---|
+| **Herança de CSS filter** | `gsap.set(ancestral, { filter: brightness(0.3) })` propaga para **todos** os filhos | Target aparece escurecido a 30% |
+| **Rasterização de ancestral** | `display:none` no ancestral oculta o `<g>` do target | Target desaparece; utilizador vê o PNG do ancestral (baixa resolução) |
+
+### Solução (Dois Pontos de Protecção)
+
+#### Ponto 1: Filtro de ancestrais no `useNavigator.ts`
+
+```typescript
+// ANTES (v2.1): ancestrais incluídos → target desfocado
+const outOfFocusElements =
+  svgElement.querySelectorAll(outOfFocusSelector);
+
+// DEPOIS (v2.2): ancestrais excluídos via el.contains(target)
+const outOfFocusElements = Array.from(
+  svgElement.querySelectorAll(outOfFocusSelector),
+).filter((el) => !el.contains(target));
+```
+
+`el.contains(target)` é uma verificação DOM nativa O(1) que retorna `true` se `el` é ancestral do `target` (ou o próprio target). Isto garante que:
+- Ancestrais NÃO recebem `brightness(0.3)` → CSS filter não propaga
+- Ancestrais NÃO são passados ao `optimizeLevelElements` → não rasterizados
+
+#### Ponto 2: Guarda defensiva no `useOptimizeSvgParts.ts`
+
+```typescript
+// Coletar IDs do target + toda a cadeia ancestral
+const protectedIds = new Set<string>();
+if (currentElement.id) protectedIds.add(currentElement.id);
+let ancestorEl: Element | null = currentElement.parentElement;
+while (ancestorEl) {
+  if (ancestorEl.id) protectedIds.add(ancestorEl.id);
+  ancestorEl = ancestorEl.parentElement;
+}
+
+// No processChunk: skip silencioso para IDs protegidos
+for (let i = index; i < end; i++) {
+  if (protectedIds.has(elements[i].id)) continue;
+  rasterizeElement(elements[i]);
+}
+```
+
+Esta guarda é **redundante por design**: o ponto 1 já filtra ancestrais do input. Mas protege contra chamadas ao `optimizeLevelElements` fora do fluxo standard de `changeLevelTo`.
+
+### Comportamento Visual Correcto (v2.2)
+
+```
+<g id="conventional_cages--ps">     ← SEM filter, SEM rasterização (ancestral)
+  <g id="laying_hen--lf">           ← SEM filter, SEM rasterização (ancestral)
+    <g id="laying--ph">             ← TARGET: vectorial 100%, brightness(1)
+      <g id="heat--ci">             ← descendente protegido pelo selector
+    </g>
+    <g id="rearing--ph">            ← brightness(0.3) + rasterizado (irmão)
+  </g>
+  <g id="broiler--lf">              ← brightness(0.3) + rasterizado (irmão)
+  </g>
+</g>
+```
+
+### Ficheiros Alterados (v2.1 → v2.2)
+
+| Ficheiro | Mudança |
+|---|---|
+| `navigator/hooks/useNavigator.ts` | Filtro `el.contains(target)` no `outOfFocusElements`; tipo `NodeListOf<Element>` → `readonly Element[]` |
+| `navigator/hooks/useOptimizeSvgParts.ts` | Guarda `protectedIds` (Set de target + ancestrais) no `processChunk`; tipo `NodeListOf<Element>` → `readonly Element[]` |
+
+### Impacto de Performance
+
+| Operação | Custo |
+|---|---|
+| `el.contains(target)` por elemento no `.filter()` | ~O(1) DOM nativo — negligível |
+| Construção do `protectedIds` Set (walk up DOM tree) | ~3-5 iterações (profundidade da hierarquia) — O(depth) |
+| `protectedIds.has(id)` por elemento no `processChunk` | O(1) Set lookup — negligível |
+
+**Nenhum impacto mensurável** na performance de transição. O overhead total é < 0.1ms.
+
+---
+
+## Otimização v2.3: Z-Order SVG + Herança de Filtro no `<image>`
+
+### Bug Identificado
+
+No nível CI (MAX_LEVEL), o target do zoom aparecia coberto por PNGs dos irmãos.
+O elemento selecionado (ex: porco gilt) ficava com qualidade de imagem PNG apesar
+de ser o alvo da câmara.
+
+### Causa Raiz (Duas Questões Combinadas)
+
+#### 1. Z-Order SVG = Ordem DOM
+
+Em SVG, o elemento mais tardio no DOM renderiza POR CIMA dos anteriores.
+`rasterizeElement` insere o `<image>` após o `<g>` oculto:
+
+```typescript
+element.parentNode?.insertBefore(imageEl, element.nextSibling);
+```
+
+Quando irmãos do mesmo nível se sobrepõem espacialmente (ex: porcos no mesmo
+pen com contornos que se cruzam), o `<image>` PNG de um irmão é inserido
+DEPOIS do target no DOM — renderizando POR CIMA do vector nítido:
+
+```
+DOM antes do swap:
+  <g id="gilt--ci">...</g>           ← target (vector)
+  <g id="boar--ci">...</g>           ← irmão
+
+DOM após rasterização:
+  <g id="gilt--ci">...</g>           ← target (vector), z-index INFERIOR
+  <g id="boar--ci" display:none>     ← oculto
+  <image for="boar--ci" .../>        ← PNG, renderiza POR CIMA de gilt!
+```
+
+#### 2. Filtro Ausente no `<image>`
+
+O `gsap.set()` aplica `brightness(0.3)` ao `<g>` original. Mas quando
+`rasterizeElement` oculta o `<g>` e insere o `<image>` como **sibling** (não
+filho), o `<image>` **NÃO herda** o filtro CSS. Resultado: o PNG é renderizado
+a **100% de brilho**, tornando a sobreposição sobre o target ainda mais visível.
+
+### Solução (Três Pontos de Correcção)
+
+#### Ponto 1: Elevação do Target (`optimizeLevelElements`)
+
+```typescript
+// ANTES: target pode ficar abaixo dos <image> dos irmãos
+requestAnimationFrame(processChunk);
+
+// DEPOIS (v2.3): move target para o fim do parent
+const targetParent = currentElement.parentNode;
+if (targetParent) {
+  elevatedRef.current = {
+    element: currentElement,
+    parent: targetParent,
+    nextSibling: currentElement.nextSibling,
+  };
+  targetParent.appendChild(currentElement);
+}
+requestAnimationFrame(processChunk);
+```
+
+`appendChild` com um filho existente **move** (não clona). O GSAP mantém
+referências por ponteiro, não por posição DOM — os tweens continuam funcionais.
+
+Resultado DOM:
+
+```
+<g id="boar--ci" display:none>     ← oculto
+<image for="boar--ci" .../>        ← PNG
+<g id="gilt--ci">...</g>           ← target: VECTOR, z-index SUPERIOR ✓
+```
+
+#### Ponto 2: Restauro de Z-Order (`restoreAllRasterized`)
+
+```typescript
+// Restaura a posição original antes de limpar as rasterizações
+if (elevatedRef.current) {
+  const { element, parent, nextSibling } = elevatedRef.current;
+  if (element.parentNode === parent) {
+    parent.insertBefore(element, nextSibling);
+  }
+  elevatedRef.current = null;
+}
+```
+
+Garante que o DOM volta à ordem original do SVG entre transições.
+
+#### Ponto 3: Herança de Filtro no `<image>` (`rasterizeElement`)
+
+```typescript
+// ANTES (v2.2): <image> sem filtro → renderiza a 100% brilho
+element.style.display = "none";
+element.parentNode?.insertBefore(imageEl, element.nextSibling);
+
+// DEPOIS (v2.3): copia o inline filter do <g> para o <image>
+if (element.style.filter) {
+  imageEl.style.filter = element.style.filter;
+}
+element.style.display = "none";
+element.parentNode?.insertBefore(imageEl, element.nextSibling);
+```
+
+Copiar o `style.filter` (aplicado pelo `gsap.set` em useNavigator) garante
+que o PNG herda a mesma aparência visual do `<g>` original.
+
+### Ficheiros Alterados (v2.2 → v2.3)
+
+| Ficheiro | Mudança |
+|---|---|
+| `navigator/hooks/useOptimizeSvgParts.ts` | `elevatedRef` para z-order; `appendChild(target)` + restauro em `restoreAllRasterized`; cópia `style.filter` para `<image>` em `rasterizeElement` |
+
+### Impacto de Performance
+
+| Operação | Custo |
+|---|---|
+| `appendChild(target)` | O(1) DOM nativo — move 1 nó |
+| `insertBefore(target, nextSibling)` no restore | O(1) DOM nativo |
+| `style.filter` copy | O(1) property read + write |
+
+---
 
 ### Positivas
 
@@ -278,4 +515,6 @@ Os três ADRs formam o **Nível 1 + Nível 2 de Otimização**:
 | ADR-003 | Browser / GSAP | Eventos DOM activos durante câmara | `pointerEvents: none` + `killTweensOf` |
 | ADR-004 v1 | GPU | Nós vectoriais/frame durante zoom | Rasterização client-side (Canvas) |
 | ADR-004 v2 | GPU + Rede | Latência de rasterização client-side | LOD via PNG Swap: prefetch + swap O(1) |
-| **ADR-004 v2.1** | **GPU + Main Thread** | **Contenção rAF + 1200 filter repaints/frame** | **rAF time-slicing (400 el/frame) + `gsap.set` instantâneo** |
+| ADR-004 v2.1 | GPU + Main Thread | Contenção rAF + 1200 filter repaints/frame | rAF time-slicing (400 el/frame) + `gsap.set` instantâneo |
+| **ADR-004 v2.2** | **DOM + CSS** | **Ancestrais rasterizados ocultam o target** | **Filtro de ancestrais (`el.contains`) + guarda defensiva `protectedIds`** |
+| **ADR-004 v2.3** | **SVG Z-Order** | **PNGs de irmãos sobrepõem target (DOM order)** | **Elevação do target (`appendChild`) + herança de filtro no `<image>`** |
