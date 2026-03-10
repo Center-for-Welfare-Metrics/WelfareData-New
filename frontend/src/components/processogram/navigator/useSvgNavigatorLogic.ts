@@ -127,6 +127,10 @@ export function useSvgNavigatorLogic({
   /** Flag de trava: true durante animações para evitar double-clicks. */
   const lockInteractionRef = useRef<boolean>(false);
 
+  /** Ref para a função clearHover exposta pelo useHoverEffects.
+   *  Permite que o motor de câmara limpe hover residual antes de transições. */
+  const clearHoverRef = useRef<(() => void) | null>(null);
+
   /** ViewBox original do SVG (capturado uma vez no carregamento).
    *  Usado para estabilizar o cálculo de BBox via getCTM() —
    *  sem isso, o getCTM() reflete o viewBox animado pelo GSAP,
@@ -188,6 +192,9 @@ export function useSvgNavigatorLogic({
           `#${CSS.escape(currentId)}`,
         );
         if (self) {
+          // Restauro explícito imediato — garante que o elemento nunca
+          // fica com opacity herdada de ancestral durante a transição
+          gsap.set(self, { opacity: FOCUSED_OPACITY[currentTheme] });
           gsap.to(self, {
             opacity: FOCUSED_OPACITY[currentTheme],
             duration,
@@ -233,6 +240,11 @@ export function useSvgNavigatorLogic({
     imageCache,
   });
 
+  // 4b'. Limpa o hover via ref — estável entre renders.
+  const clearHover = useCallback(() => {
+    clearHoverRef.current?.();
+  }, []);
+
   // 4c. Motor de câmera (viewBox + isolamento visual)
   const { changeLevelTo } = useNavigator({
     svgElement,
@@ -247,6 +259,7 @@ export function useSvgNavigatorLogic({
     originalViewBoxRef,
     optimizeLevelElements,
     restoreAllRasterized,
+    clearHover,
   });
 
   // 4d. Interceptação de cliques (drill-down / drill-up / close)
@@ -269,6 +282,7 @@ export function useSvgNavigatorLogic({
     currentLevelRef,
     currentElementIdRef,
     currentTheme,
+    clearHoverRef,
   });
 
   // ═══════════════════════════════════════════════════
@@ -343,9 +357,11 @@ export function useSvgNavigatorLogic({
         gsap.killTweensOf(svgElement.querySelectorAll('[id*="--"]'));
 
         // Reverte toda a opacidade visual (restaura visibilidade)
-        const allFiltered = svgElement.querySelectorAll('[id*="--"]');
-        if (allFiltered.length > 0) {
-          gsap.to(allFiltered, {
+        const allNavigable = svgElement.querySelectorAll('[id*="--"]');
+        if (allNavigable.length > 0) {
+          // Restauro imediato de TODOS os elementos navegáveis
+          gsap.set(allNavigable, { opacity: FOCUSED_OPACITY[currentTheme] });
+          gsap.to(allNavigable, {
             opacity: FOCUSED_OPACITY[currentTheme],
             duration: ANIMATION_DURATION,
             ease: ANIMATION_EASE,

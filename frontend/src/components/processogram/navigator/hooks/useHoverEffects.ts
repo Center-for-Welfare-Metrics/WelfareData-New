@@ -72,6 +72,12 @@ export interface UseHoverEffectsProps {
 
   /** Tema visual actual ("dark" ou "light"). */
   currentTheme: "dark" | "light";
+
+  /**
+   * Ref exposta para que o motor de câmara possa limpar o hover
+   * antes de iniciar uma transição de nível (changeLevelTo).
+   */
+  clearHoverRef?: RefObject<(() => void) | null>;
 }
 
 // ─── Hook ──────────────────────────────────────────────────────────────
@@ -82,6 +88,7 @@ export function useHoverEffects({
   currentLevelRef,
   currentElementIdRef,
   currentTheme,
+  clearHoverRef,
 }: UseHoverEffectsProps): void {
   /**
    * Rastreia o ID do grupo actualmente sob o cursor.
@@ -114,6 +121,9 @@ export function useHoverEffects({
      */
     function clearHover(): void {
       if (hoveredElementId.current === null) return;
+
+      // Restaura opacity do elemento que estava em hover imediatamente
+      const prevHoveredId = hoveredElementId.current;
       hoveredElementId.current = null;
 
       const currentId = currentElementIdRef.current;
@@ -121,6 +131,11 @@ export function useHoverEffects({
       const levelKey = INVERSE_DICT[level];
       const nextLevelKey = INVERSE_DICT[level + 1];
       const theme = themeRef.current;
+
+      const prevHovered = svg.querySelector(`[id="${prevHoveredId}"]`);
+      if (prevHovered) {
+        gsap.set(prevHovered, { opacity: UNFOCUSED_OPACITY[theme] });
+      }
 
       if (levelKey) {
         const siblings = svg.querySelectorAll(
@@ -149,6 +164,9 @@ export function useHoverEffects({
       }
     }
 
+    // Expõe clearHover para o motor de câmara via ref
+    if (clearHoverRef) clearHoverRef.current = clearHover;
+
     function handleMouseMove(e: MouseEvent): void {
       // ── LOCK: câmara em animação → aborta imediatamente ──
       if (lockInteraction.current) return;
@@ -165,6 +183,9 @@ export function useHoverEffects({
         clearHover();
         return;
       }
+
+      // Guard: não aplicar hover no elemento já focado
+      if (group.id === currentElementIdRef.current) return;
 
       // Mesmo grupo — evita spam de animações GSAP no mesmo pixel
       if (group.id === hoveredElementId.current) return;
@@ -203,6 +224,7 @@ export function useHoverEffects({
     return () => {
       svg.removeEventListener("mousemove", handleMouseMove);
       svg.removeEventListener("mouseleave", handleMouseLeave);
+      if (clearHoverRef) clearHoverRef.current = null;
     };
   }, [svgElement]); // eslint-disable-line react-hooks/exhaustive-deps
   // ↑ Regista os listeners apenas quando o SVG muda.

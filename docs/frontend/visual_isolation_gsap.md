@@ -96,6 +96,17 @@ ANTES (visão geral):        DEPOIS (zoom em LF1):
 **Ref de animação:**
 A animação é guardada em `outOfFocusAnimationRef`. Antes de cada nova transição, `.revert()` é chamado para desfazer o estado anterior limpa e atomicamente.
 
+**Proteção de ancestrais (opacity herança CSS):**
+Com `opacity`, se um ancestral do target receber `UNFOCUSED_OPACITY`, TODOS os filhos herdam essa opacity máxima — diferente de `filter` que não acumula de forma bloqueante. Para evitar isso:
+
+1. O filtro de `outOfFocusElements` exclui qualquer elemento que contenha o target na árvore DOM **E** o próprio target:
+   ```ts
+   .filter((el) => !el.contains(target) && el !== target)
+   ```
+2. Imediatamente após o `gsap.set` dos irmandos fora de foco, o target recebe `gsap.set(target, { opacity: FOCUSED_OPACITY })` explícito
+3. No `onComplete` da animação de viewBox, o target recebe novamente `gsap.set` antes de `setFullBrightnessToCurrentLevel`
+4. Antes de qualquer operação em `changeLevelTo`, `clearHover()` é chamado para eliminar hover residual
+
 ### 2. Hover (`useHoverEffects`)
 
 Efeito instantâneo de "spotlight" ao mover o cursor:
@@ -129,6 +140,10 @@ Mouse sobre PH1:           Mouse sai:
 | Sem sobreposição de animações | `.revert()` na animação anterior antes de iniciar nova |
 | Sem flickering em hover | `useEffect([onHover])` — só recalcula quando o target muda |
 | Tema dinâmico | `FOCUSED_OPACITY[theme]` / `UNFOCUSED_OPACITY[theme]` — automático |
+| Ancestrais protegidos | `!el.contains(target) && el !== target` impede herança de opacity |
+| Target sempre visível | `gsap.set(target, FOCUSED)` explícito após cada `gsap.set` de outOfFocus |
+| Hover limpo antes de transição | `clearHover()` chamado no início de `changeLevelTo` |
+| Guard de hover no focado | `mousemove` ignora hover no elemento já focado (`currentElementIdRef`) |
 
 ---
 

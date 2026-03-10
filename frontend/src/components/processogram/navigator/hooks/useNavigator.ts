@@ -28,6 +28,7 @@ import { getLevelNumberById } from "../extractInfoFromId";
 import {
   ANIMATION_DURATION,
   ANIMATION_EASE,
+  FOCUSED_OPACITY,
   UNFOCUSED_OPACITY,
   INVERSE_DICT,
   MAX_LEVEL,
@@ -98,6 +99,12 @@ export interface UseNavigatorProps {
     currentElement: SVGElement,
     outOfFocusElements: readonly Element[],
   ) => void;
+
+  /**
+   * Limpa o estado de hover antes de iniciar uma transição.
+   * Garante que nenhum hover residual interfere com os gsap.set de opacity.
+   */
+  clearHover?: () => void;
 }
 
 // ─── Return Type ───────────────────────────────────────────────────────
@@ -132,6 +139,7 @@ export function useNavigator({
   originalViewBoxRef,
   restoreAllRasterized,
   optimizeLevelElements,
+  clearHover,
 }: UseNavigatorProps): UseNavigatorReturn {
   /**
    * Ref para a animação de escurecimento dos irmãos fora de foco.
@@ -143,6 +151,9 @@ export function useNavigator({
   const changeLevelTo = useCallback(
     (target: SVGElement, toPrevious: boolean, callback?: () => void) => {
       if (!svgElement) return;
+
+      // Limpa hover residual antes de qualquer transição
+      clearHover?.();
 
       // ═══════════════════════════════════════════════
       // 0. RESTAURAR RASTERIZAÇÕES ANTERIORES
@@ -199,7 +210,7 @@ export function useNavigator({
       // (el.contains é O(1) — verificação DOM nativa).
       const outOfFocusElements = Array.from(
         svgElement.querySelectorAll(outOfFocusSelector),
-      ).filter((el) => !el.contains(target));
+      ).filter((el) => !el.contains(target) && el !== target);
 
       // ═══════════════════════════════════════════════
       // 3. BLINDAGEM DE EVENTOS DOM
@@ -238,6 +249,9 @@ export function useNavigator({
         });
       }
 
+      // Garante que o target nunca herde opacity reduzida de nenhum tween residual
+      gsap.set(target, { opacity: FOCUSED_OPACITY[currentTheme] });
+
       // ═══════════════════════════════════════════════
       // 5. NOTIFICAR MUDANÇA (breadcrumb, etc.)
       // ═══════════════════════════════════════════════
@@ -268,6 +282,8 @@ export function useNavigator({
           gsap.set(svgElement, {
             pointerEvents: "auto",
             onComplete: () => {
+              // Garante opacity total no target antes de restaurar nível
+              gsap.set(target, { opacity: FOCUSED_OPACITY[currentTheme] });
               // Restaura brilho dos filhos do elemento alvo
               setFullBrightnessToCurrentLevel(toPrevious);
               lockInteractionRef.current = false;
@@ -277,7 +293,7 @@ export function useNavigator({
         },
       });
     },
-    [svgElement, historyLevelRef, lockInteractionRef, currentLevelRef, currentElementIdRef, currentTheme, onChange, getElementIdentifierWithHierarchy, setFullBrightnessToCurrentLevel, originalViewBoxRef, restoreAllRasterized, optimizeLevelElements],
+    [svgElement, historyLevelRef, lockInteractionRef, currentLevelRef, currentElementIdRef, currentTheme, onChange, getElementIdentifierWithHierarchy, setFullBrightnessToCurrentLevel, originalViewBoxRef, restoreAllRasterized, optimizeLevelElements, clearHover],
   );
 
   return { changeLevelTo };

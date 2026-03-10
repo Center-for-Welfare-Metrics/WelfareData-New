@@ -119,16 +119,25 @@ diretamente nos elementos SVG, sem classes CSS intermediárias:
 
 ```
 Drill-down (useNavigator.changeLevelTo):
+  0. clearHover() — limpa hover residual (opacity + ref)
   1. Calcula viewBox destino (getElementViewBox com swap síncrono do viewBox original)
   2. Seleciona irmãos fora de foco (seletores CSS com flag `i` — case-insensitive)
+     Filtro: !el.contains(target) && el !== target (protege ancestrais)
   3. gsap.set(irmãos, { opacity: UNFOCUSED_OPACITY })
-  4. gsap.fromTo(svg, { viewBox: atual }, { viewBox: destino })
-  5. onComplete → setFullBrightnessToCurrentLevel()
+  4. gsap.set(target, { opacity: FOCUSED_OPACITY }) — explícito, impede herança
+  5. gsap.to(svg, { viewBox: destino })
+  6. onComplete → gsap.set(target, FOCUSED) + setFullBrightnessToCurrentLevel()
+
+setFullBrightnessToCurrentLevel():
+  1. gsap.set(self, { opacity: FOCUSED_OPACITY }) — restauro imediato
+  2. gsap.to(self, { opacity: FOCUSED_OPACITY })  — animação suave
+  3. gsap.to(filhos próximo nível, { opacity: FOCUSED_OPACITY })
 
 Hover (useHoverEffects):
-  1. onHover = id → gsap.to(hovered, { opacity: FOCUSED_OPACITY })
+  1. Guard: ignora hover no elemento já focado (currentElementIdRef)
+  2. onHover = id → gsap.to(hovered, { opacity: FOCUSED_OPACITY })
                    → gsap.to(siblings, { opacity: UNFOCUSED_OPACITY })
-  2. onHover = null → restaura estado padrão do nível atual
+  3. clearHover() → gsap.set(prevHovered, UNFOCUSED) + restaura estado padrão
 ```
 
 ### Vantagens sobre o sistema de classes CSS
@@ -172,8 +181,9 @@ Todos os primitivos SVG (`path`, `rect`, `polygon`, `circle`, `ellipse`, `line`,
 
 ### Cenário 1: Primeiro clique (nível 0 → drill-down para ps)
 - [ ] viewBox anima suavemente para enquadrar o `<g>` clicado
-- [ ] Irmãos do elemento clicado escurecem via GSAP filter
+- [ ] Irmãos do elemento clicado escurecem via GSAP opacity
 - [ ] O elemento alvo e seus filhos do próximo nível ficam com brilho total
+- [ ] Ancestrais do target NÃO são afetados (opacity: 1)
 
 ### Cenário 2: Drill-down para nível 2
 - [ ] viewBox anima para enquadrar o `<g>` de nível 2
@@ -183,11 +193,14 @@ Todos os primitivos SVG (`path`, `rect`, `polygon`, `circle`, `ellipse`, `line`,
 ### Cenário 3: Hover sobre grupo semântico
 - [ ] Grupo sob o cursor ganha visibilidade total (FOCUSED_OPACITY)
 - [ ] Irmãos do mesmo nível ficam reduzidos (UNFOCUSED_OPACITY)
+- [ ] Hover no elemento já focado é ignorado (guard)
 - [ ] Ao mover o cursor para fora: restaura estado padrão do nível
+- [ ] Ao fazer drill-down com hover ativo: hover é limpo sem opacity residual
 
 ### Cenário 4: Drill-up (clique no vazio)
 - [ ] viewBox anima de volta para o nível anterior (historyLevel)
 - [ ] Isolamento visual restaurado para o nível anterior
+- [ ] Todos os elementos navegáveis restaurados com FOCUSED_OPACITY no reset total
 - [ ] Se no root e clicar no vazio: onClose() limpa tudo
 
 ### Cenário 5: Preservação de cores (dark mode)
