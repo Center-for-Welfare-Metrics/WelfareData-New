@@ -61,3 +61,6 @@ gcloud-key*.json
 *.pid
 *.seed
 *.pid.lock
+
+# curl session cookies
+cookies.txt
